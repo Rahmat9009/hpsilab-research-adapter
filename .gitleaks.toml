@@ -1,0 +1,20 @@
+title = "HPSILab research adapter secret scanning"
+
+[extend]
+useDefault = true
+
+# Only local dependency/cache/build artifacts are excluded.
+# Production sources, documentation, tests and JSON fixtures remain in scope.
+[allowlist]
+description = "Local dependencies and generated build/cache artifacts"
+paths = [
+    '''(^|/)(\.git|\.venv[^/]*|__pycache__|\.pytest_cache|\.ruff_cache|\.test-tmp|\.wheelhouse|\.reports|build|dist)/''',
+    '''(^|/)[^/]+\.egg-info/''',
+]
+
+# Deterministic, deliberately nonfunctional canary for offline scanner verification.
+[[rules]]
+id = "synthetic-offline-canary"
+description = "Nonfunctional synthetic secret used only for scanner verification"
+regex = '''HPSILAB_SYNTHETIC_SECRET_[A-Z0-9]{24}'''
+keywords = ["HPSILAB_SYNTHETIC"]

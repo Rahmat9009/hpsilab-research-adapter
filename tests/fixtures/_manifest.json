@@ -1,0 +1,109 @@
+{
+  "description": "Test inventory metadata only; this is not a provider response or an API schema.",
+  "provenance": "All existing response fixtures are fabricated empty objects.",
+  "full_response_compatibility_verified": false,
+  "methods": {
+    "ai_prediction": {
+      "schema_status": "pending",
+      "variants": {
+        "full": {
+          "file": "ai_prediction_full.json",
+          "status": "schema_pending"
+        },
+        "missing_field": {
+          "file": "ai_prediction_missing_field.json",
+          "status": "schema_pending"
+        },
+        "empty": {
+          "file": "ai_prediction_empty.json",
+          "status": "synthetic_ready"
+        }
+      }
+    },
+    "iv_radar": {
+      "schema_status": "pending",
+      "variants": {
+        "full": {
+          "file": "iv_radar_full.json",
+          "status": "schema_pending"
+        },
+        "missing_field": {
+          "file": "iv_radar_missing_field.json",
+          "status": "schema_pending"
+        },
+        "empty": {
+          "file": "iv_radar_empty.json",
+          "status": "synthetic_ready"
+        }
+      }
+    },
+    "option_pressure": {
+      "schema_status": "pending",
+      "variants": {
+        "full": {
+          "file": "option_pressure_full.json",
+          "status": "schema_pending"
+        },
+        "missing_field": {
+          "file": "option_pressure_missing_field.json",
+          "status": "schema_pending"
+        },
+        "empty": {
+          "file": "option_pressure_empty.json",
+          "status": "synthetic_ready"
+        }
+      }
+    },
+    "monte_carlo": {
+      "schema_status": "pending",
+      "variants": {
+        "full": {
+          "file": "monte_carlo_full.json",
+          "status": "schema_pending"
+        },
+        "missing_field": {
+          "file": "monte_carlo_missing_field.json",
+          "status": "schema_pending"
+        },
+        "empty": {
+          "file": "monte_carlo_empty.json",
+          "status": "synthetic_ready"
+        }
+      }
+    },
+    "analyze_stock": {
+      "schema_status": "pending",
+      "variants": {
+        "full": {
+          "file": "analyze_stock_full.json",
+          "status": "schema_pending"
+        },
+        "missing_field": {
+          "file": "analyze_stock_missing_field.json",
+          "status": "schema_pending"
+        },
+        "empty": {
+          "file": "analyze_stock_empty.json",
+          "status": "synthetic_ready"
+        }
+      }
+    },
+    "pretrade_risk_scan": {
+      "schema_status": "pending",
+      "variants": {
+        "full": {
+          "file": "pretrade_risk_scan_full.json",
+          "status": "schema_pending"
+        },
+        "missing_field": {
+          "file": "pretrade_risk_scan_missing_field.json",
+          "status": "schema_pending"
+        },
+        "empty": {
+          "file": "pretrade_risk_scan_empty.json",
+          "status": "synthetic_ready"
+        }
+      }
+    }
+  }
+}
