@@ -213,11 +213,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {name:20s} {outcome}")
     per_call = [(e.tool, e.status, e.cost) for e in ledger.entries if e.phase == PHASE]
     print(f"per call (tool, status, credits): {per_call}")
+    delta = None if None in (start_balance, end_balance) else start_balance - end_balance
     print(
         f"probe tool calls={ledger.calls(PHASE)} credits={ledger.spent(PHASE)} "
         f"(unknown-cost={ledger.unknown_cost_calls(PHASE)}) "
         f"balance {start_balance} -> {end_balance} "
-        f"(endpoint delta {None if None in (start_balance, end_balance) else start_balance - end_balance}) "
+        f"(endpoint delta {delta}) "
         f"blind={ledger.blind}"
     )
     seen = sorted({n for e in ledger.entries for n in e.credit_header_names})
