@@ -12,6 +12,7 @@ from hpsilab_research_adapter.normalize import EXPECTED_FIELDS, normalize
 from hpsilab_research_adapter.tools import TOOL_NAMES
 
 SCHEMAS = Path(__file__).resolve().parent.parent / "schemas"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 _TYPE_VALUES: dict[str, Any] = {
     "string": "fake",
@@ -183,3 +184,36 @@ def test_input_not_mutated() -> None:
     raw = {"status": "fake"}
     normalize("iv_radar", "TEST", FakeMcpResult(raw, {"k": 1}))
     assert raw == {"status": "fake"}
+
+
+def _fixture_raw(tool: str, variant: str) -> Any:
+    payload = json.loads((FIXTURES / f"{tool}_{variant}.json").read_text(encoding="utf-8"))
+    return FakeMcpResult(payload, None) if isinstance(payload, list) else payload
+
+
+def _manifest_variants(tool: str) -> dict[str, Any]:
+    manifest = json.loads((FIXTURES / "_manifest.json").read_text(encoding="utf-8"))
+    return manifest["methods"][tool]["variants"]
+
+
+@pytest.mark.parametrize("tool", TOOL_NAMES)
+def test_full_fixture_has_no_missing_fields(tool: str) -> None:
+    result = normalize(tool, "TEST", _fixture_raw(tool, "full"))
+    assert result.missing_fields == ()
+
+
+@pytest.mark.parametrize("tool", TOOL_NAMES)
+def test_missing_field_fixture_reports_exactly_the_omitted_field(tool: str) -> None:
+    omitted = _manifest_variants(tool)["missing_field"]["omitted_field"]
+    result = normalize(tool, "TEST", _fixture_raw(tool, "missing_field"))
+    assert result.missing_fields == (omitted,)
+
+
+def test_ai_prediction_field_missing_from_any_record_is_reported() -> None:
+    omitted = _manifest_variants("ai_prediction")["missing_field"]["omitted_field"]
+    raw = _fixture_raw("ai_prediction", "missing_field")
+    assert len(raw.data) > 1 and omitted not in raw.data[0] and omitted in raw.data[1]
+    result = normalize("ai_prediction", "TEST", raw)
+    assert omitted in result.missing_fields
+    # source_fields stays the union of all record keys, so it still lists the field.
+    assert omitted in result.source_fields
