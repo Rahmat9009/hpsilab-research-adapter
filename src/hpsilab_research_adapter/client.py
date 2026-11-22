@@ -61,10 +61,13 @@ from hpsilab_research_adapter.policy import (
     MAX_ATTEMPTS,
     TIMEOUT_ATTEMPTS,
 )
-from hpsilab_research_adapter.tools import TOOLS, ToolSpec
+from hpsilab_research_adapter.tools import ALLOWED_SDK_METHODS, TOOLS, ToolSpec
 from hpsilab_research_adapter.types import Result
 
 _TICKER_RE = re.compile(r"^[A-Z][A-Z0-9.\-]{0,9}$")
+DEFAULT_MAX_CREDITS = 50  # one full six-tool pass cost 38 credits on 2026-11-22
+DEFAULT_CALL_CAP = 150
+_TOOL_NAMES = {s.name for s in TOOLS.values()} | {s.sdk_method for s in TOOLS.values()}
 
 # (retryable, max_attempts, builder) decided per SDK exception by _classify.
 _Builder = Callable[[str, int], AdapterError]
@@ -204,8 +207,16 @@ class ResearchClient:
         self._api_key = api_key
         self._sleep = sleep
         self._normalizer = normalizer or _default_normalizer
+        if transport is None and request is None:
+            # Library use without from_env still gets an (in-memory) credit guard.
+            transport = RecordingTransport(
+                CreditLedger(None),
+                "library",
+                budget=DEFAULT_MAX_CREDITS,
+                call_cap=DEFAULT_CALL_CAP,
+            )
         self._transport = transport
-        self._catalog_pending = False
+        self._started = False
         self._sdk = HpsiMcpClient(
             api_key=api_key,
             transport=transport,
@@ -223,8 +234,8 @@ class ResearchClient:
         *,
         phase: str = "cli",
         ledger_path: Path | None = DEFAULT_LEDGER_PATH,
-        max_credits: int = 20,
-        call_cap: int = 20,
+        max_credits: int = DEFAULT_MAX_CREDITS,
+        call_cap: int = DEFAULT_CALL_CAP,
         total_budget: int | None = None,
         min_balance: int | None = None,
     ) -> ResearchClient:
@@ -244,25 +255,23 @@ class ResearchClient:
             total_budget=total_budget,
             floor=min_balance,
         )
-        client = cls(api_key, transport=recording)
-        client._catalog_pending = ledger.meta_free_verified
-        return client
+        return cls(api_key, transport=recording)
 
     # -- internals --------------------------------------------------------
     def _sdk_request(self, spec: ToolSpec, ticker: str) -> Any:
+        if spec.sdk_method not in ALLOWED_SDK_METHODS:  # defence in depth
+            raise ValueError("SDK method is not one of the six approved research tools.")
         kwargs: dict[str, Any] = {"include_metadata": True} if spec.supports_metadata else {}
         return getattr(self._sdk, spec.sdk_method)(ticker, **kwargs)
 
-    def _load_catalog_once(self) -> None:
+    def _start_once(self) -> None:
+        """Once per client: prove credit endpoints free (first use of a ledger), load
+        catalog prices, and read a fresh balance (which also clears a blind ledger)."""
         transport = self._transport
-        if not self._catalog_pending or not isinstance(transport, RecordingTransport):
+        if self._started or not isinstance(transport, RecordingTransport):
             return
-        self._catalog_pending = False
-        names = {s.name for s in TOOLS.values()} | {s.sdk_method for s in TOOLS.values()}
-        try:
-            transport.load_catalog(make_template(DEFAULT_BASE_URL, self._api_key), names)
-        except httpx.HTTPError:
-            return  # prices unknown: the ledger falls back to the largest cost seen
+        self._started = True
+        transport.start(make_template(DEFAULT_BASE_URL, self._api_key), _TOOL_NAMES)
         for spec in TOOLS.values():
             if spec.name in transport.prices:
                 transport.prices.setdefault(spec.sdk_method, transport.prices[spec.name])
@@ -281,7 +290,7 @@ class ResearchClient:
         if spec is None:
             raise ValueError("Unknown tool; choose one of the six approved research tools.")
         symbol = _normalize_ticker(ticker)
-        self._load_catalog_once()
+        self._start_once()
 
         attempt = 0
         while True:
@@ -304,7 +313,16 @@ class ResearchClient:
                 failure = builder(spec.name, attempt)
             if failure is not None:
                 raise failure from None
-            return self._normalizer(spec.name, symbol, raw)
+            try:
+                return self._normalizer(spec.name, symbol, raw)
+            except Exception:
+                # The call was billed; an unexpected response shape must not crash
+                # the caller or leak the body. Report it as an upstream problem.
+                raise UpstreamError(
+                    "HPSILab response did not match the expected shape.",
+                    tool=spec.name,
+                    attempts=attempt,
+                ) from None
 
     def close(self) -> None:
         self._sdk.close()

@@ -230,6 +230,8 @@ def test_ledger_budget_blocks_retry_and_propagates():
 
 def test_real_sdk_success_through_recording_transport():
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/api/credits/"):
+            return httpx.Response(200, json={"credits_remaining": 5001})
         assert request.url.path.endswith("/TEST")
         return httpx.Response(
             200,

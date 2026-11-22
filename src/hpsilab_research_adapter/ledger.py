@@ -1,23 +1,33 @@
-"""Credit ledger and header-recording transport. Orchestrator-owned shared infrastructure.
+"""Credit ledger and recording transport. Orchestrator-owned shared infrastructure.
 
 HPSILab bills in Credits. Responses carry ``X-Credits-Charged`` and
-``X-Credits-Remaining`` (hpsilab-mcp README); ``GET /api/credits/catalog`` lists
+``X-Credits-Remaining`` (hpsilab-mcp README). ``GET /api/credits/catalog`` lists
 tool prices and ``GET /api/credits/balance`` returns the balance. The SDK exposes
 none of this, so ``RecordingTransport`` wraps the httpx transport handed to
 ``HpsiMcpClient(transport=...)``.
 
-Before every tool request ``CreditLedger.authorize`` checks, using the catalog
-price when known (else the largest cost seen so far, else 1):
-  * the per-run call cap and credit budget,
-  * an optional total budget across runs (the persisted ledger),
-  * an optional balance floor, against the last balance HPSILab reported.
-After every response the cost is taken from ``X-Credits-Charged``, else from the
-balance difference. If no balance header is present the transport asks the
-balance endpoint; only if that also fails does the ledger go blind, and a blind
-ledger refuses every later request.
+Guarantees (each is covered by tests/test_ledger.py):
 
-Credit-endpoint reads (``/api/credits/*``) are recorded under ``<phase>:meta``.
-They do not count toward call caps; any cost they show is still counted.
+* Every HTTP request the transport sends is recorded: tool calls, retries,
+  credit-endpoint reads, and attempts that end in a transport exception.
+* Before every tool request, ``authorize`` checks the per-run call cap and
+  credit budget, the optional total budget across runs, and the optional
+  balance floor. The price used is the catalog price when known, else the
+  largest cost seen for that tool, else ``UNKNOWN_PRICE_RESERVE``.
+* A floor is never checked against an unknown balance: with a floor set and no
+  known balance, the request is refused.
+* A cost is never assumed to be zero without evidence. Evidence is the charged
+  header, a non-negative balance difference, an HTTP error status (the SDK
+  README states failed calls are not charged), or a credit-endpoint read after
+  those endpoints were proven free. Anything else is unknown, and unknown costs
+  count as ``UNKNOWN_PRICE_RESERVE`` (or more) in every budget sum.
+* A tool request whose cost cannot be established marks the ledger blind, and a
+  blind ledger refuses tool requests until a later balance read succeeds
+  (``RecordingTransport.start`` does that read at the beginning of every run).
+* An unreadable ledger file refuses every request rather than starting from 0.
+
+Known limit: the ledger file is not locked; two concurrent runs sharing one file
+can each see the other's spend late. Use separate ledgers or run sequentially.
 
 Records hold counts only. No response bodies, no credentials.
 """
@@ -25,6 +35,7 @@ Records hold counts only. No response bodies, no credentials.
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 from collections.abc import Mapping
@@ -42,6 +53,10 @@ DEFAULT_LEDGER_PATH = Path(".credits") / "ledger.json"
 CHARGED_HEADER = "X-Credits-Charged"
 BALANCE_PATH = "/api/credits/balance"
 CATALOG_PATH = "/api/credits/catalog"
+# Reserve for a call whose price is unknown. Larger than any single tool cost
+# observed on 2026-11-22 (max 15 credits, pretrade_risk_scan).
+UNKNOWN_PRICE_RESERVE = 20
+TRANSPORT_FAILURE = 0  # status recorded when no HTTP response arrived
 
 _BALANCE_KEYS = ("credits_remaining", "remaining", "balance", "credits", "available")
 _PRICE_KEYS = ("credits", "price", "cost", "credits_per_call", "price_credits", "credit_cost")
@@ -63,6 +78,10 @@ class Entry:
     credit_header_names: list[str] = field(default_factory=list)
 
 
+def _is_meta(phase: str) -> bool:
+    return phase.endswith(":meta")
+
+
 class CreditLedger:
     def __init__(self, path: Path | None = DEFAULT_LEDGER_PATH) -> None:
         self.path = path
@@ -70,11 +89,15 @@ class CreditLedger:
         self.entries: list[Entry] = []
         self.blind = False
         self.meta_free_verified = False
+        self.unreadable = False
         if path is not None and path.exists():
-            raw = json.loads(path.read_text(encoding="utf-8"))
-            self.entries = [Entry(**e) for e in raw.get("entries", [])]
-            self.blind = bool(raw.get("blind", False))
-            self.meta_free_verified = bool(raw.get("meta_free_verified", False))
+            try:
+                raw = json.loads(path.read_text(encoding="utf-8"))
+                self.entries = [Entry(**e) for e in raw.get("entries", [])]
+                self.blind = bool(raw.get("blind", False))
+                self.meta_free_verified = bool(raw.get("meta_free_verified", False))
+            except (OSError, ValueError, TypeError, AttributeError):
+                self.unreadable = True  # fail closed; never silently restart at 0
 
     # ---- queries -------------------------------------------------------
     @property
@@ -87,25 +110,35 @@ class CreditLedger:
     @property
     def max_cost(self) -> int:
         costs = [e.cost for e in self.entries if e.cost]
-        return max(costs) if costs else 1
+        return max(costs) if costs else 0
+
+    def tool_cost(self, tool: str | None) -> int | None:
+        """Largest cost observed for this tool, or None if never observed."""
+        costs = [e.cost for e in self.entries if e.tool == tool and e.cost is not None]
+        return max(costs) if costs else None
+
+    @property
+    def unknown_cost_value(self) -> int:
+        return max(UNKNOWN_PRICE_RESERVE, self.max_cost)
 
     def _match(self, entry: Entry, phase: str | None, include_meta: bool) -> bool:
         if phase is None:
-            return include_meta or not entry.phase.endswith(":meta")
+            return include_meta or not _is_meta(entry.phase)
         if entry.phase == phase:
             return True
         return include_meta and entry.phase == f"{phase}:meta"
 
     def spent(self, phase: str | None = None) -> int:
-        """Credits spent, meta reads included. Unknown cost counts at the largest cost seen."""
+        """Credits spent, credit-endpoint reads included. Unknown costs count high."""
+        unknown = self.unknown_cost_value
         return sum(
-            e.cost if e.cost is not None else self.max_cost
+            e.cost if e.cost is not None else unknown
             for e in self.entries
             if self._match(e, phase, include_meta=True)
         )
 
     def calls(self, phase: str | None = None) -> int:
-        """Tool calls only; credit-endpoint reads are excluded."""
+        """Tool requests (attempts) only; credit-endpoint reads are excluded."""
         return sum(1 for e in self.entries if self._match(e, phase, include_meta=False))
 
     def unknown_cost_calls(self, phase: str | None = None) -> int:
@@ -114,6 +147,12 @@ class CreditLedger:
         )
 
     # ---- enforcement ---------------------------------------------------
+    def reserve_for(self, tool: str | None, price: int | None) -> int:
+        if price is not None:
+            return price
+        seen = self.tool_cost(tool)
+        return seen if seen is not None else self.unknown_cost_value
+
     def authorize(
         self,
         phase: str,
@@ -121,20 +160,26 @@ class CreditLedger:
         budget: int,
         call_cap: int,
         price: int | None = None,
+        tool: str | None = None,
         total_budget: int | None = None,
         floor: int | None = None,
     ) -> None:
         """Raise CreditBudgetExceeded unless one more tool request is within every limit."""
         with self._lock:
-            reserve = price if price is not None else self.max_cost
+            reserve = self.reserve_for(tool, price)
             balance = self.last_balance
             checks = [
+                (self.unreadable, "ledger file is unreadable; fix or move it"),
                 (self.blind, "credit balance unknown after an earlier response"),
                 (self.calls(phase) >= call_cap, f"{phase} call cap {call_cap} reached"),
                 (self.spent(phase) + reserve > budget, f"{phase} credit budget {budget}"),
                 (
                     total_budget is not None and self.spent() + reserve > total_budget,
                     f"total credit budget {total_budget}",
+                ),
+                (
+                    floor is not None and balance is None,
+                    f"balance floor {floor} set but the balance is unknown",
                 ),
                 (
                     floor is not None and balance is not None and balance - reserve < floor,
@@ -162,15 +207,20 @@ class CreditLedger:
         charged: int | None = None,
         balance_source: str | None = None,
         credit_header_names: list[str] | None = None,
+        balance_before: int | None | object = ...,
     ) -> Entry:
+        """Record one request. ``balance_before`` defaults to the last known balance;
+        tool requests pass the balance captured before sending. Credit-endpoint
+        reads never derive a cost from a balance difference."""
         with self._lock:
-            meta = phase.endswith(":meta")
-            before = self.last_balance
-            cost = charged
-            if cost is None and before is not None and balance_after is not None:
-                cost = max(0, before - balance_after)
+            meta = _is_meta(phase)
+            before = self.last_balance if balance_before is ... else balance_before
+            cost: int | None = charged  # already validated: non-negative or None
+            if cost is None and not meta and isinstance(before, int) and balance_after is not None:
+                delta = before - balance_after
+                cost = delta if delta >= 0 else None  # negative = top-up; cost unknown
             if cost is None and status >= 400:
-                cost = 0  # HPSILab: "a call that fails is never charged"
+                cost = 0  # hpsilab-mcp README: "a call that fails is never charged"
             if cost is None and meta and self.meta_free_verified:
                 cost = 0
             entry = Entry(
@@ -179,7 +229,7 @@ class CreditLedger:
                 tool=tool,
                 ticker=ticker,
                 status=status,
-                balance_before=before,
+                balance_before=before if isinstance(before, int) else None,
                 balance_after=balance_after,
                 cost=cost,
                 charged_header=charged,
@@ -187,22 +237,29 @@ class CreditLedger:
                 credit_header_names=credit_header_names or [],
             )
             self.entries.append(entry)
-            if balance_after is None and charged is None and not meta:
+            if not meta and cost is None and balance_after is None:
                 self.blind = True
             self._save()
             return entry
+
+    def clear_blind(self) -> None:
+        """Call only after a fresh balance read succeeded."""
+        with self._lock:
+            if self.blind:
+                self.blind = False
+                self._save()
 
     def mark_meta_free(self) -> None:
         """Call only after verify_meta_free showed the credit endpoints cost 0."""
         with self._lock:
             self.meta_free_verified = True
             for e in self.entries:
-                if e.phase.endswith(":meta") and e.cost is None:
+                if _is_meta(e.phase) and e.cost is None:
                     e.cost = 0
             self._save()
 
     def _save(self) -> None:
-        if self.path is None:
+        if self.path is None or self.unreadable:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
@@ -215,18 +272,28 @@ class CreditLedger:
         os.replace(tmp, self.path)
 
 
-# ---- parsing (formats of the credit endpoints are undocumented; parse tolerantly) ----
+# ---- parsing (credit endpoint formats are undocumented; parse tolerantly) ----
 def _int(value: Any) -> int | None:
-    if isinstance(value, bool):
+    """Non-negative integer credits, rounded up; anything else is None."""
+    if isinstance(value, bool) or value is None:
         return None
-    if isinstance(value, (int, float)):
-        return int(value)
     if isinstance(value, str):
         try:
-            return int(float(value.strip()))
+            value = float(value.strip())
         except ValueError:
             return None
-    return None
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, float):
+        if not math.isfinite(value):
+            return None
+        try:
+            number = math.ceil(value)
+        except (OverflowError, ValueError):
+            return None
+    else:
+        return None
+    return number if number >= 0 else None
 
 
 def header_int(headers: httpx.Headers, name: str) -> int | None:
@@ -254,7 +321,7 @@ def parse_balance_body(body: Any) -> int | None:
 
 
 def parse_catalog(body: Any, tool_names: set[str]) -> dict[str, int]:
-    """Map SDK tool name -> credit price from a /api/credits/catalog body, best effort."""
+    """Map tool name -> credit price from a /api/credits/catalog body, best effort."""
     prices: dict[str, int] = {}
 
     def price_of(value: Any) -> int | None:
@@ -268,8 +335,9 @@ def parse_catalog(body: Any, tool_names: set[str]) -> dict[str, int]:
     def walk(node: Any) -> None:
         if isinstance(node, Mapping):
             for key, value in node.items():
-                if key in tool_names and price_of(value) is not None:
-                    prices.setdefault(key, price_of(value))  # type: ignore[arg-type]
+                p = price_of(value) if key in tool_names else None
+                if p is not None:
+                    prices.setdefault(key, p)
             for nk in _NAME_KEYS:
                 name = node.get(nk)
                 if isinstance(name, str) and name in tool_names:
@@ -286,11 +354,32 @@ def parse_catalog(body: Any, tool_names: set[str]) -> dict[str, int]:
     return prices
 
 
+def make_template(base_url: str, api_key: str) -> httpx.Request:
+    """A request carrying only the auth header, used to address the credit endpoints."""
+    return httpx.Request("GET", base_url, headers={"Authorization": f"Bearer {api_key}"})
+
+
+def _credit_names(headers: httpx.Headers) -> list[str]:
+    return sorted(k for k in headers.keys() if "credit" in k.lower())
+
+
+@dataclass
+class _Fetched:
+    path: str
+    response: httpx.Response | None
+    body: Any
+    status: int
+    balance: int | None
+    source: str | None
+    charged: int | None
+    header_names: list[str]
+
+
 class RecordingTransport(httpx.BaseTransport):
-    """Wraps the real transport; authorizes before and records after each request.
+    """Wraps the real transport; authorizes before and records after every request.
 
     Set ``context`` (``tool`` = SDK tool name, ``ticker``) before each SDK call.
-    ``prices`` maps SDK tool name -> credits; fill it with ``load_catalog``.
+    Call ``start(template, tool_names)`` once per run before the first tool call.
     """
 
     def __init__(
@@ -313,46 +402,72 @@ class RecordingTransport(httpx.BaseTransport):
         self.inner = inner or httpx.HTTPTransport()
         self.context: dict[str, str | None] = {"tool": None, "ticker": None}
         self.prices: dict[str, int] = {}
+        self.meta_enabled = True
 
     # -- credit endpoints -------------------------------------------------
-    def _meta_get(self, template: httpx.Request, path: str) -> tuple[httpx.Response, Any]:
+    def _fetch(self, template: httpx.Request, path: str) -> _Fetched:
+        """GET a credit endpoint without recording it. Never raises transport errors."""
+        if self.ledger.unreadable:
+            raise CreditBudgetExceeded("Refusing request: ledger file is unreadable.")
         url = template.url.copy_with(path=path, query=None)
         auth = {k: v for k, v in template.headers.items() if k.lower() == "authorization"}
-        req = httpx.Request("GET", url, headers=auth)
-        response = self.inner.handle_request(req)
-        response.read()
+        try:
+            response = self.inner.handle_request(httpx.Request("GET", url, headers=auth))
+            response.read()
+        except httpx.HTTPError:
+            return _Fetched(path, None, None, TRANSPORT_FAILURE, None, None, None, [])
         try:
             body = response.json()
         except ValueError:
             body = None
-        charged = header_int(response.headers, CHARGED_HEADER)
         balance = parse_balance(response.headers)
         source = "header" if balance is not None else None
         if balance is None and path == BALANCE_PATH and response.status_code < 400:
             balance = parse_balance_body(body)
             source = "endpoint" if balance is not None else None
+        return _Fetched(
+            path,
+            response,
+            body,
+            response.status_code,
+            balance,
+            source,
+            header_int(response.headers, CHARGED_HEADER),
+            _credit_names(response.headers),
+        )
+
+    def _record_meta(self, fetched: _Fetched) -> None:
         self.ledger.record(
             f"{self.phase}:meta",
-            tool=path,
+            tool=fetched.path,
             ticker=None,
-            status=response.status_code,
-            balance_after=balance,
-            charged=charged,
-            balance_source=source,
-            credit_header_names=_credit_names(response.headers),
+            status=fetched.status,
+            balance_after=fetched.balance,
+            charged=fetched.charged,
+            balance_source=fetched.source,
+            credit_header_names=fetched.header_names,
         )
-        return response, body
+
+    def _meta_get(self, template: httpx.Request, path: str) -> tuple[httpx.Response | None, Any]:
+        """GET a credit endpoint and record it. Never raises transport errors."""
+        fetched = self._fetch(template, path)
+        self._record_meta(fetched)
+        return fetched.response, fetched.body
 
     def read_balance(self, template: httpx.Request) -> int | None:
-        response, body = self._meta_get(template, BALANCE_PATH)
-        if response.status_code >= 400:
-            return None
-        balance = parse_balance(response.headers)
-        return balance if balance is not None else parse_balance_body(body)
+        fetched = self._fetch(template, BALANCE_PATH)
+        self._record_meta(fetched)
+        return fetched.balance if fetched.status and fetched.status < 400 else None
+
+    def load_catalog(self, template: httpx.Request, tool_names: set[str]) -> dict[str, int]:
+        response, body = self._meta_get(template, CATALOG_PATH)
+        if response is not None and response.status_code < 400:
+            self.prices.update(parse_catalog(body, tool_names))
+        return dict(self.prices)
 
     def verify_meta_free(self, template: httpx.Request, tool_names: set[str]) -> dict:
         """Read balance, balance, catalog, balance. Free iff the balance never moves and
-        no X-Credits-Charged above 0 is reported. Marks the ledger on success."""
+        no positive X-Credits-Charged is reported. Marks the ledger on success."""
         first = self.read_balance(template)
         second = self.read_balance(template)
         self.load_catalog(template, tool_names)
@@ -371,78 +486,84 @@ class RecordingTransport(httpx.BaseTransport):
             "prices": dict(self.prices),
         }
 
-    def load_catalog(self, template: httpx.Request, tool_names: set[str]) -> dict[str, int]:
-        response, body = self._meta_get(template, CATALOG_PATH)
-        if response.status_code < 400:
-            self.prices.update(parse_catalog(body, tool_names))
-        return dict(self.prices)
+    def start(self, template: httpx.Request, tool_names: set[str]) -> int | None:
+        """Begin a run: prove the credit endpoints free (once per ledger), load prices,
+        and read a fresh balance. A successful read clears a blind ledger. If the
+        endpoints are not free, they are not used again in this run."""
+        if not self.ledger.meta_free_verified:
+            result = self.verify_meta_free(template, tool_names)
+            if not result["free"]:
+                self.meta_enabled = False
+                self.prices.clear()
+                return None
+            balance = result["balances"][-1]
+        else:
+            self.load_catalog(template, tool_names)
+            balance = self.read_balance(template)
+        if balance is not None:
+            self.ledger.clear_blind()
+        return balance
 
     # -- tool requests ----------------------------------------------------
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         tool = self.context.get("tool")
+        ticker = self.context.get("ticker")
         self.ledger.authorize(
             self.phase,
             budget=self.budget,
             call_cap=self.call_cap,
             price=self.prices.get(tool) if tool else None,
+            tool=tool,
             total_budget=self.total_budget,
             floor=self.floor,
         )
-        response = self.inner.handle_request(request)
+        before = self.ledger.last_balance
+        try:
+            response = self.inner.handle_request(request)
+        except BaseException:
+            # No response, but the request may still have been billed. Record the
+            # attempt (tool entry first, then the balance read used to cost it).
+            fetched = self._fallback_balance(request)
+            balance = fetched.balance if fetched else None
+            self.ledger.record(
+                self.phase,
+                tool=tool,
+                ticker=ticker,
+                status=TRANSPORT_FAILURE,
+                balance_after=balance,
+                balance_source="endpoint" if balance is not None else None,
+                balance_before=before,
+            )
+            if fetched:
+                self._record_meta(fetched)
+            raise
         charged = header_int(response.headers, CHARGED_HEADER)
         balance = parse_balance(response.headers)
         source = "header" if balance is not None else None
+        fetched = None
         if balance is None:
-            # Header missing: ask the balance endpoint rather than go blind.
-            fallback = self._meta_balance_quiet(request)
-            if fallback is not None:
-                balance, source = fallback, "endpoint"
+            fetched = self._fallback_balance(request)
+            balance = fetched.balance if fetched else None
+            source = "endpoint" if balance is not None else None
         self.ledger.record(
             self.phase,
             tool=tool,
-            ticker=self.context.get("ticker"),
+            ticker=ticker,
             status=response.status_code,
             balance_after=balance,
             charged=charged,
             balance_source=source,
             credit_header_names=_credit_names(response.headers),
+            balance_before=before,
         )
+        if fetched:
+            self._record_meta(fetched)
         return response
 
-    def _meta_balance_quiet(self, template: httpx.Request) -> int | None:
-        """Balance endpoint read whose own ledger entry must not make the ledger blind."""
-        url = template.url.copy_with(path=BALANCE_PATH, query=None)
-        auth = {k: v for k, v in template.headers.items() if k.lower() == "authorization"}
-        try:
-            response = self.inner.handle_request(httpx.Request("GET", url, headers=auth))
-            response.read()
-            body = response.json() if response.status_code < 400 else None
-        except (httpx.HTTPError, ValueError):
+    def _fallback_balance(self, template: httpx.Request) -> _Fetched | None:
+        if not self.meta_enabled:
             return None
-        balance = parse_balance(response.headers)
-        if balance is None:
-            balance = parse_balance_body(body)
-        if balance is not None:
-            self.ledger.record(
-                f"{self.phase}:meta",
-                tool=BALANCE_PATH,
-                ticker=None,
-                status=response.status_code,
-                balance_after=balance,
-                charged=header_int(response.headers, CHARGED_HEADER),
-                balance_source="endpoint",
-                credit_header_names=_credit_names(response.headers),
-            )
-        return balance
+        return self._fetch(template, BALANCE_PATH)
 
     def close(self) -> None:
         self.inner.close()
-
-
-def make_template(base_url: str, api_key: str) -> httpx.Request:
-    """A request carrying only the auth header, used to address the credit endpoints."""
-    return httpx.Request("GET", base_url, headers={"Authorization": f"Bearer {api_key}"})
-
-
-def _credit_names(headers: httpx.Headers) -> list[str]:
-    return sorted(k for k in headers.keys() if "credit" in k.lower())
