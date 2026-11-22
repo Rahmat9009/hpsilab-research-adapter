@@ -15,6 +15,7 @@ import io
 import json
 import os
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 from hpsilab_mcp.client import DEFAULT_BASE_URL
@@ -52,9 +53,8 @@ def catalog_report(api_key: str) -> None:
     (ROOT / ".probe" / "catalog.raw.json").write_text(json.dumps(body, indent=2), "utf-8")
     names = {s.name for s in TOOLS.values()} | {s.sdk_method for s in TOOLS.values()}
     print(f"catalog status={response.status_code}")
-    print("catalog structure (keys/types only):")
-    print(json.dumps(shape(body, "NVDA"), indent=1)[:4000])
-    print(f"catalog prices parsed: {parse_catalog(body, names)}")
+    print(f"catalog structure: {json.dumps(shape(body, 'NVDA'))[:300]}...")
+    print(f"catalog prices parsed: {parse_catalog(body, names)}", flush=True)
     transport.close()
 
 
@@ -115,55 +115,87 @@ def main() -> int:
 
     ledger = CreditLedger(LEDGER)
     remaining = TOTAL_CREDIT_BUDGET - ledger.spent()
-    phase = "ship"
-    rows = []
+    phase = f"ship-{datetime.now(UTC):%Y%m%dT%H%M%S}"
+    sdk = {s.name: s.sdk_method for s in TOOLS.values()}
+    rows: list[dict] = []
     stopped = None
-    with ResearchClient.from_env(
-        phase=phase,
-        ledger_path=LEDGER,
-        max_credits=remaining,
-        call_cap=SHIP_CHECK_CALL_CAP,
-        total_budget=TOTAL_CREDIT_BUDGET,
-        min_balance=BALANCE_FLOOR,
-    ) as client:
-        for ticker in TICKERS:
-            for tool in TOOL_NAMES:
-                try:
-                    r = client.run(tool, ticker)
-                    rows.append(
-                        (
-                            ticker,
-                            tool,
-                            "ok",
-                            len(r.source_fields),
-                            list(r.missing_fields),
-                            r.horizon is not None,
+    print(f"per-ticker run: phase={phase} budget={remaining} floor={BALANCE_FLOOR}", flush=True)
+    print(
+        "ticker tool                 status               fields missing horizon credits",
+        flush=True,
+    )
+    try:
+        with ResearchClient.from_env(
+            phase=phase,
+            ledger_path=LEDGER,
+            max_credits=remaining,
+            call_cap=SHIP_CHECK_CALL_CAP,
+            total_budget=TOTAL_CREDIT_BUDGET,
+            min_balance=BALANCE_FLOOR,
+        ) as client:
+            for ticker in TICKERS:
+                for tool in TOOL_NAMES:
+                    row = {
+                        "ticker": ticker,
+                        "tool": tool,
+                        "status": "ok",
+                        "fields": 0,
+                        "missing": 0,
+                        "horizon": False,
+                    }
+                    try:
+                        r = client.run(tool, ticker)
+                        row.update(
+                            fields=len(r.source_fields),
+                            missing=len(r.missing_fields),
+                            horizon=r.horizon is not None,
                         )
+                    except CreditBudgetExceeded as exc:
+                        stopped = f"credit guard refused {ticker} {tool}: {exc}"
+                        break
+                    except AdapterError as exc:
+                        row["status"] = type(exc).__name__
+                    last = [
+                        e
+                        for e in CreditLedger(LEDGER).entries
+                        if e.phase == phase and e.tool == sdk[tool] and e.ticker == ticker
+                    ]
+                    row["credits"] = last[-1].cost if last else None
+                    rows.append(row)
+                    print(
+                        f"{ticker:6s} {tool:20s} {row['status']:20s} {row['fields']:6d} "
+                        f"{row['missing']:7d} {'yes' if row['horizon'] else 'no':7s} "
+                        f"{row['credits']}",
+                        flush=True,
                     )
-                except CreditBudgetExceeded as exc:
-                    stopped = str(exc)
+                if stopped:
                     break
-                except AdapterError as exc:
-                    rows.append((ticker, tool, type(exc).__name__, 0, [], False))
-            if stopped:
-                break
+    except Exception as exc:  # report, never hide; no message text (could echo a body)
+        stopped = f"unexpected {type(exc).__name__} after {len(rows)} calls"
+    if stopped:
+        print(f"STOPPED: {stopped}", flush=True)
 
     ledger = CreditLedger(LEDGER)
-    costs = {(e.ticker, e.tool): e.cost for e in ledger.entries if e.phase == phase}
-    sdk = {s.name: s.sdk_method for s in TOOLS.values()}
-    print("ticker tool                 status          fields missing horizon credits")
-    for ticker, tool, status, n, missing, has_h in rows:
-        print(
-            f"{ticker:6s} {tool:20s} {status:15s} {n:6d} {len(missing):7d} "
-            f"{'yes' if has_h else 'no':7s} {costs.get((ticker, sdk[tool]))}"
-        )
-    if stopped:
-        print(f"STOPPED by credit guard: {stopped}")
-    ok = sum(1 for r in rows if r[2] == "ok")
+    ok = sum(1 for r in rows if r["status"] == "ok")
+    summary = {
+        "phase": phase,
+        "planned": len(TICKERS) * len(TOOL_NAMES),
+        "completed": len(rows),
+        "ok": ok,
+        "stopped": stopped,
+        "rows": rows,
+        "ship_credits": ledger.spent(phase),
+        "all_time_credits": ledger.spent(),
+        "total_budget": TOTAL_CREDIT_BUDGET,
+        "balance_now": ledger.last_balance,
+        "blind": ledger.blind,
+    }
+    (ROOT / ".credits" / "ship_summary.json").write_text(json.dumps(summary, indent=2), "utf-8")
     print(
-        f"ship check: {ok}/{len(rows)} ok of {len(TICKERS) * len(TOOL_NAMES)} planned; "
-        f"ship credits={ledger.spent(phase)}; all-time credits={ledger.spent()} "
-        f"of {TOTAL_CREDIT_BUDGET}; balance now {ledger.last_balance}; blind={ledger.blind}"
+        f"ship check: {ok}/{len(rows)} ok of {summary['planned']} planned; "
+        f"ship credits={summary['ship_credits']}; all-time credits={summary['all_time_credits']} "
+        f"of {TOTAL_CREDIT_BUDGET}; balance now {summary['balance_now']}; blind={ledger.blind}",
+        flush=True,
     )
     return 0
 

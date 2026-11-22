@@ -47,6 +47,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import threading
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field
@@ -396,8 +397,56 @@ def parse_catalog(body: Any, tool_names: set[str]) -> dict[str, int]:
             for item in node:
                 walk(item)
 
+    structured = _catalog_entries(body)
+    if structured is not None:
+        # The documented live shape (observed 2026-11-22). Only this is used when
+        # present, so an inactive entry can never leak in through the generic walk.
+        for entry in structured:
+            credits = _int(entry.get("credits"))
+            if credits is None:
+                continue
+            names = [entry.get("canonical_tool_name"), *(entry.get("aliases") or [])]
+            for name in names:
+                if isinstance(name, str) and name in tool_names:
+                    prices.setdefault(name, credits)
+        return prices
     walk(body)
     return prices
+
+
+def _catalog_entries(body: Any) -> list[Mapping[str, Any]] | None:
+    """Active entries of a catalog shaped {"tools": [{"canonical_tool_name", "aliases",
+    "credits", "active", "rest_path_patterns", ...}]}; None if the body is not that shape.
+    ``active`` must be exactly true; anything else (false, missing, "true") is skipped."""
+    if not isinstance(body, Mapping) or not isinstance(body.get("tools"), list):
+        return None
+    tools = [t for t in body["tools"] if isinstance(t, Mapping)]
+    if not tools or not all("canonical_tool_name" in t for t in tools):
+        return None
+    return [t for t in tools if t.get("active") is True]
+
+
+def parse_catalog_paths(body: Any) -> list[tuple[str, int]]:
+    """(rest_path_pattern, credits) for active catalog entries, for matching by request
+    path when a tool's SDK name differs from the catalog's names."""
+    pairs: list[tuple[str, int]] = []
+    for entry in _catalog_entries(body) or []:
+        credits = _int(entry.get("credits"))
+        patterns = entry.get("rest_path_patterns") or []
+        if credits is None or not isinstance(patterns, list):
+            continue
+        pairs.extend((p, credits) for p in patterns if isinstance(p, str) and p)
+    return pairs
+
+
+def price_for_path(path: str, pairs: list[tuple[str, int]]) -> int | None:
+    """Price of the first catalog pattern matching ``path`` (``*`` matches one segment
+    or a suffix, as in "/api/monte_carlo/*" and "/api/iv_batch*")."""
+    for pattern, credits in pairs:
+        regex = "^" + re.escape(pattern).replace(r"\*", r"[^/]*") + "$"
+        if re.match(regex, path):
+            return credits
+    return None
 
 
 def make_template(base_url: str, api_key: str) -> httpx.Request:
@@ -448,6 +497,7 @@ class RecordingTransport(httpx.BaseTransport):
         self.inner = inner or httpx.HTTPTransport()
         self.context: dict[str, str | None] = {"tool": None, "ticker": None}
         self.prices: dict[str, int] = {}
+        self.path_prices: list[tuple[str, int]] = []
         self.meta_enabled = True
         # Balance observed during THIS run (None until one is seen). The floor is
         # checked only against this, never against a balance from an earlier run.
@@ -514,6 +564,7 @@ class RecordingTransport(httpx.BaseTransport):
         response, body = self._meta_get(template, CATALOG_PATH)
         if response is not None and response.status_code < 400:
             self.prices.update(parse_catalog(body, tool_names))
+            self.path_prices = parse_catalog_paths(body)
         return dict(self.prices)
 
     def verify_meta_free(self, template: httpx.Request, tool_names: set[str]) -> dict:
@@ -546,6 +597,7 @@ class RecordingTransport(httpx.BaseTransport):
             if not result["free"]:
                 self.meta_enabled = False
                 self.prices.clear()
+                self.path_prices = []
                 return None
             balance = result["balances"][-1]
         else:
@@ -563,7 +615,7 @@ class RecordingTransport(httpx.BaseTransport):
             self.phase,
             budget=self.budget,
             call_cap=self.call_cap,
-            price=self.prices.get(tool) if tool else None,
+            price=self._price(tool, request.url.path),
             tool=tool,
             total_budget=self.total_budget,
             floor=self.floor,
@@ -618,6 +670,12 @@ class RecordingTransport(httpx.BaseTransport):
         if fetched:
             self._record_meta(fetched)
         return response
+
+    def _price(self, tool: str | None, path: str) -> int | None:
+        """Catalog price by SDK tool name, else by the request path's catalog pattern."""
+        if tool and tool in self.prices:
+            return self.prices[tool]
+        return price_for_path(path, self.path_prices)
 
     def _fallback_balance(self, template: httpx.Request) -> _Fetched | None:
         if not self.meta_enabled:

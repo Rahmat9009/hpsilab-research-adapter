@@ -31,6 +31,8 @@ from hpsilab_research_adapter.ledger import (
     RecordingTransport,
     parse_balance,
     parse_catalog,
+    parse_catalog_paths,
+    price_for_path,
 )
 
 KEY = "test-only-credential-not-valid"
@@ -606,3 +608,70 @@ def test_string_flags_in_ledger_file_are_not_truthy(tmp_path: Path):
     path.write_text(json.dumps({"blind": "false", "meta_free_verified": "false", "entries": []}))
     ledger = CreditLedger(path)
     assert ledger.meta_free_verified is False
+
+
+# ------------------------------------------- catalog shape observed live 2026-11-22
+FAKE_CATALOG = json.loads(
+    (Path(__file__).parent / "fixtures" / "credits_catalog_fake.json").read_text(encoding="utf-8")
+)
+SDK_NAMES = {
+    "analyze_stock",
+    "get_ai_prediction",
+    "get_iv_radar",
+    "get_option_pressure",
+    "get_pretrade_risk_scan",
+    "get_monte_carlo",
+}
+
+
+def test_catalog_canonical_names_and_aliases_only_when_active():
+    prices = parse_catalog(FAKE_CATALOG, SDK_NAMES)
+    assert prices == {
+        "analyze_stock": 7,  # the inactive 99-credit duplicate is ignored
+        "get_ai_prediction": 9,  # matched through aliases
+        "get_monte_carlo": 1,
+    }
+    # active: "true" (a string) is not active; iv_radar has a different catalog name.
+    assert "get_option_pressure" not in prices
+    assert "get_iv_radar" not in prices
+
+
+def test_catalog_path_patterns_cover_renamed_tools():
+    pairs = parse_catalog_paths(FAKE_CATALOG)
+    assert price_for_path("/api/iv_batch", pairs) == 11
+    assert price_for_path("/api/monte_carlo/TEST", pairs) == 1
+    assert price_for_path("/api/montecarlo/TEST", pairs) == 1
+    assert price_for_path("/api/analyze_stock/TEST", pairs) == 7  # active entry first
+    assert price_for_path("/api/option_pressure/TEST", pairs) is None  # inactive ("true")
+    assert price_for_path("/api/monte_carlo/TEST/extra", pairs) is None
+    assert price_for_path("/api/pretrade-risk-scan", pairs) is None
+
+
+def test_transport_prices_renamed_tool_by_path_and_refuses_over_budget():
+    fake = Fake(catalog=FAKE_CATALOG, tool=lambda f, r: resp(charged="11", remaining="989"))
+    client, ledger, transport = make(fake, budget=10)
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("iv_radar", "TEST")  # path price 11 > budget 10
+    assert fake.tool_hits == []
+    client, ledger, transport = make(fake, budget=11)
+    client.run("iv_radar", "TEST")
+    assert len(fake.tool_hits) == 1
+
+
+def test_inactive_catalog_price_never_used():
+    catalog = {
+        "tools": [
+            {
+                "canonical_tool_name": "analyze_stock",
+                "aliases": [],
+                "credits": 1,
+                "active": False,
+                "rest_path_patterns": ["/api/analyze_stock/*"],
+            }
+        ]
+    }
+    fake = Fake(catalog=catalog)
+    client, _, _ = make(fake, budget=5)
+    with pytest.raises(CreditBudgetExceeded):  # unknown price reserves 20
+        client.run("analyze_stock", "TEST")
+    assert fake.tool_hits == []
