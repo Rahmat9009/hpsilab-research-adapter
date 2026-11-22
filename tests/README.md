@@ -49,26 +49,27 @@ client and SDK. They must not add retry logic, error translation or a fake
 client to make a test pass. `tests/sdk_contract.py` documents the seam itself.
 It is a test-only specification, not a public SDK API.
 
-## Fixtures: six empty responses ready, twelve shapes pending
+## Fixtures: 18 synthetic responses validated against probed shapes
 
-`fixtures/` holds six synthetic response files, one per research method. Each
-contains exactly `{}`. `fixtures/_manifest.json` lists all 18 planned paths
-(empty, full and missing-field variants for each method) and marks the twelve
-full and missing-field files as `schema_pending`. It is inventory metadata, not
-an HPSILab response.
+`schemas/` holds one `*.shape.json` file per method, produced by `tools/probe.py`
+from a live hpsilab-mcp 0.14.2 probe on 2026-11-22. They record keys and JSON
+types only, never values.
 
-`schemas/` holds one `*.shape.json` file per method. These record keys and types
-only, never values, and were built from probed response shapes. They are not
-used as full-response fixtures.
+`fixtures/` holds 18 synthetic files: for each method, a full response, a
+missing-field response and the empty `{}` response. Every value is fabricated
+(`TEST`, `fake-*`, small round numbers); no provider value was copied, and a
+test asserts no fixture contains a real ticker. Each missing-field file is its
+full counterpart minus exactly one documented field, recorded in
+`fixtures/_manifest.json` as `omitted_field`. For `ai_prediction`, whose response
+is an array, the field is removed from the first record (`omitted_location`).
 
-Each full-response compatibility case is explicitly skipped until the documented
-response structure for that method is available. When it is, create the full
-response with the same structure and replace EVERY value with fabricated content.
-Derive each missing-field response from its full counterpart by deleting exactly
-one documented field. Record the omitted field and the schema version, add shape
-validation, and update the manifest and the pending tests together. Do not paste
-real responses, market values, credentials, account identifiers or personal data
-into this repo. No full-response compatibility is currently verified.
+`test_fixtures.py` validates every full fixture against its shape file (no
+missing, unknown or wrongly typed keys) and checks each missing-field variant.
+These tests run; none are skipped. Compatibility is verified against the shapes
+observed on 2026-11-22 only; if HPSILab changes a response, re-probe and update
+shapes, fixtures and `normalize.EXPECTED_FIELDS` together. Never paste real
+responses, market values, credentials, account identifiers or personal data
+into this repo.
 
 `pretrade_risk_scan` is a research method name; it grants no trading authority.
 

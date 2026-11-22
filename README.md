@@ -183,7 +183,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 168 passed and 6 skipped. The 6 skipped cases are the full and missing-field fixture checks, which wait for documented response structures. See [tests/README.md](tests/README.md) for details.
+The expected result is 211 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 
