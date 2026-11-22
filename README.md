@@ -118,7 +118,7 @@ If one call fails with `RateLimited`, `Timeout` or `UpstreamError`, the CLI repo
 | Flag | Default | Meaning |
 | --- | --- | --- |
 | `--max-credits N` | 50 | Credit cap for this run. |
-| `--min-balance N` | none | Refuse a request if the account balance would drop below N. With a floor set, a request is also refused when the balance cannot be determined. |
+| `--min-balance N` | none | Refuse a request if the account balance would drop below N. With a floor set, a request is also refused until a balance has been read during the current run; a balance from an earlier run is not trusted. |
 | `--total-credits N` | none | Total credit budget across runs, enforced from the persisted ledger. A usage error with `--no-ledger`. |
 | `--ledger PATH` | `.credits/ledger.json` | Ledger file that records every request, relative to the current directory. Cannot be combined with `--no-ledger`. |
 | `--no-ledger` | off | Do not persist a ledger. The per-run limits still apply in memory. |
@@ -161,14 +161,21 @@ Before each tool request, the ledger checks:
 
 - the per-run credit budget (`--max-credits`),
 - the optional total budget across runs (`--total-credits`),
-- the optional balance floor (`--min-balance`), which refuses the request if the balance is unknown,
+- the optional balance floor (`--min-balance`), checked only against a balance read during the current run (a request is refused if none has been read),
 - and the per-run call cap, which is the number of planned requests times the three-attempt limit.
 
 The price reserved for a request is the tool's catalog price when the catalog lists it; otherwise the largest cost previously recorded for that tool; otherwise 20 Credits (above the largest single-call cost observed when this adapter was built, 15 Credits).
 
 After each response, the ledger takes the cost from `X-Credits-Charged`, or from the drop in `X-Credits-Remaining`. If the balance header is missing, it calls `GET /api/credits/balance`. A cost is never assumed to be zero without evidence: an HTTP error status counts as 0 (the SDK README states failed calls are not charged); a negative charge, a balance increase (for example a top-up) or a missing balance count as unknown, and unknown costs count as at least 20 Credits in every budget. If the cost of a tool request cannot be established (for example a response without credit headers, or a transport failure, while the balance endpoint is also unavailable), the ledger becomes blind and refuses further tool requests until a later balance read succeeds, normally at the start of the next run. An unreadable ledger file refuses every request; move or fix the file.
 
-The ledger file is not locked. Do not run two processes on the same ledger file at once.
+The price reserved for a tool is learned only from successful calls; a failed call (recorded at 0 because it is not charged) never lowers it.
+
+Known limits:
+
+- The ledger file is not locked. Do not run two processes on the same ledger file at once.
+- A request that times out but is billed by HPSILab after the timeout can be under-counted by that call's price if the next response carries `X-Credits-Charged`. The balance and the floor check stay correct because they use the balance HPSILab reports.
+- If the first-use check of the credit endpoints fails, that run is usually refused on its budget even though nothing was spent. This fails closed, and the next run checks again.
+- A hand-edited or damaged ledger file (for example a negative or non-numeric cost) is treated as unreadable and refuses every request.
 
 Retry policy:
 
@@ -196,7 +203,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 211 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
+The expected result is 282 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 

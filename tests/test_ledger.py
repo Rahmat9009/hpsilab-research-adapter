@@ -498,3 +498,94 @@ def test_unproven_credit_endpoints_are_not_used_again_in_the_run():
     # (the second run is refused if the ledger went blind; either way no more GETs)
     assert len(fake.credit_hits) == after_start
     assert ledger.meta_free_verified is False
+
+
+# ------------------------------------------------------- review loop 2 (F-N1, F-N2)
+def test_fn1_failed_call_does_not_lower_the_reserve(tmp_path: Path):
+    """A 404 (recorded at cost 0) must not make the tool look free next time."""
+    path = tmp_path / "ledger.json"
+    first = Fake(tool=lambda f, r: resp(404, body={"error": "not_found"}))
+    client, _, _ = make(first, ledger=CreditLedger(path), phase="run1", budget=100)
+    with contextlib.suppress(AdapterError):
+        client.run("monte_carlo", "TEST")
+
+    second = Fake(tool=lambda f, r: resp(charged="8", remaining="992"))
+    client, _, _ = make(second, ledger=CreditLedger(path), phase="run2", budget=0)
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("monte_carlo", "TEST")
+    assert second.tool_hits == []
+
+
+def test_fn1_within_one_run_failure_then_success_respects_budget():
+    """A failing ticker then a working one: the second call reserves the full unknown price."""
+
+    def tool(fake: Fake, request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/BADX"):
+            return resp(404, body={"error": "not_found"})
+        return resp(charged="15", remaining="985")
+
+    fake = Fake(tool=tool)
+    client, ledger, _ = make(fake, budget=UNKNOWN_PRICE_RESERVE - 1)
+    with contextlib.suppress(AdapterError):
+        client.run("monte_carlo", "BADX")
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("monte_carlo", "TEST")
+    assert ledger.spent(PHASE) <= UNKNOWN_PRICE_RESERVE - 1
+
+
+def test_fn2_floor_ignores_balance_from_an_earlier_run(tmp_path: Path):
+    """Balance read fails at start: a balance persisted by a previous run is not trusted."""
+    path = tmp_path / "ledger.json"
+    first = Fake(balance=5000, tool=lambda f, r: resp(charged="1", remaining="4999"))
+    client, _, _ = make(first, ledger=CreditLedger(path), phase="run1")
+    client.run("iv_radar", "TEST")
+
+    second = Fake(tool=lambda f, r: resp(charged="1", remaining="999"))
+    second.balance_fails = "500"
+    client, _, _ = make(second, ledger=CreditLedger(path), phase="run2", floor=1800)
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("iv_radar", "TEST")
+    assert second.tool_hits == []
+
+
+def test_fn2_floor_uses_balance_seen_in_this_run():
+    fake = Fake(balance=1000, tool=lambda f, r: resp(charged="1", remaining="999"))
+    client, _, transport = make(fake, floor=1800)
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("iv_radar", "TEST")
+    assert transport.run_balance == 1000
+    assert fake.tool_hits == []
+
+
+@pytest.mark.parametrize(
+    "entry_patch",
+    [{"cost": -50}, {"cost": "12"}, {"balance_after": -1}, {"status": "200"}, {"cost": True}],
+)
+def test_hand_edited_ledger_values_fail_closed(tmp_path: Path, entry_patch: dict):
+    path = tmp_path / "ledger.json"
+    fake = Fake(tool=lambda f, r: resp(charged="2", remaining="998"))
+    client, _, _ = make(fake, ledger=CreditLedger(path), phase="run1")
+    client.run("iv_radar", "TEST")
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw["entries"][-1].update(entry_patch)
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    before = path.read_text(encoding="utf-8")
+
+    ledger = CreditLedger(path)
+    assert ledger.unreadable
+    client, _, _ = make(fake, ledger=ledger, phase="run2")
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("iv_radar", "TEST")
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_from_env_default_phase_is_unique(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HPSILAB_API_KEY", KEY)
+    a = ResearchClient.from_env(ledger_path=None)
+    b = ResearchClient.from_env(ledger_path=None)
+    try:
+        assert a._transport.phase != b._transport.phase
+        assert a._transport.phase.startswith("lib-")
+    finally:
+        a.close()
+        b.close()

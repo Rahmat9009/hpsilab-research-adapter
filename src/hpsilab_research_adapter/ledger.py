@@ -26,8 +26,18 @@ Guarantees (each is covered by tests/test_ledger.py):
   (``RecordingTransport.start`` does that read at the beginning of every run).
 * An unreadable ledger file refuses every request rather than starting from 0.
 
-Known limit: the ledger file is not locked; two concurrent runs sharing one file
-can each see the other's spend late. Use separate ledgers or run sequentially.
+Known limits:
+* The ledger file is not locked; two concurrent runs sharing one file can each
+  see the other's spend late. Use separate ledgers or run sequentially.
+* A request that times out but is billed by HPSILab after the timeout is
+  attributed only through the balance: if the next response carries
+  ``X-Credits-Charged`` the late charge is not attributed to any entry, so the
+  ledger can under-count by that call's price. The balance and the floor check
+  stay correct because they use the balance HPSILab reports.
+* If the first-use verification of the credit endpoints fails (balance moved or
+  unreadable), its reads stay recorded at an unknown cost, so that run is
+  usually refused on its budget even though nothing was spent. This fails
+  closed; the next run re-verifies.
 
 Records hold counts only. No response bodies, no credentials.
 """
@@ -82,6 +92,27 @@ def _is_meta(phase: str) -> bool:
     return phase.endswith(":meta")
 
 
+def _validate_entry(e: Entry) -> None:
+    """Reject a hand-edited or damaged entry instead of trusting it."""
+
+    def credits(value: object, nullable: bool = True) -> bool:
+        if value is None:
+            return nullable
+        return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+    ok = (
+        isinstance(e.phase, str)
+        and isinstance(e.status, int)
+        and not isinstance(e.status, bool)
+        and credits(e.cost)
+        and credits(e.charged_header)
+        and credits(e.balance_before)
+        and credits(e.balance_after)
+    )
+    if not ok:
+        raise ValueError("invalid ledger entry")
+
+
 class CreditLedger:
     def __init__(self, path: Path | None = DEFAULT_LEDGER_PATH) -> None:
         self.path = path
@@ -96,6 +127,8 @@ class CreditLedger:
                 self.entries = [Entry(**e) for e in raw.get("entries", [])]
                 self.blind = bool(raw.get("blind", False))
                 self.meta_free_verified = bool(raw.get("meta_free_verified", False))
+                for e in self.entries:
+                    _validate_entry(e)
             except (OSError, ValueError, TypeError, AttributeError):
                 self.unreadable = True  # fail closed; never silently restart at 0
 
@@ -113,8 +146,15 @@ class CreditLedger:
         return max(costs) if costs else 0
 
     def tool_cost(self, tool: str | None) -> int | None:
-        """Largest cost observed for this tool, or None if never observed."""
-        costs = [e.cost for e in self.entries if e.tool == tool and e.cost is not None]
+        """Largest cost observed for this tool on a SUCCESSFUL (2xx) call, or None.
+
+        Failed calls are recorded at cost 0 (they are not charged), so they say
+        nothing about the tool's price and must never lower its reserve."""
+        costs = [
+            e.cost
+            for e in self.entries
+            if e.tool == tool and e.cost is not None and 200 <= e.status < 300
+        ]
         return max(costs) if costs else None
 
     @property
@@ -163,11 +203,17 @@ class CreditLedger:
         tool: str | None = None,
         total_budget: int | None = None,
         floor: int | None = None,
+        balance: int | None | object = ...,
     ) -> None:
-        """Raise CreditBudgetExceeded unless one more tool request is within every limit."""
+        """Raise CreditBudgetExceeded unless one more tool request is within every limit.
+
+        ``balance`` is the balance to check the floor against. The transport passes
+        only a balance observed during the current run, so a balance persisted by
+        an earlier run is never trusted for the floor. It defaults to the ledger's
+        last balance for direct callers."""
         with self._lock:
             reserve = self.reserve_for(tool, price)
-            balance = self.last_balance
+            balance = self.last_balance if balance is ... else balance
             checks = [
                 (self.unreadable, "ledger file is unreadable; fix or move it"),
                 (self.blind, "credit balance unknown after an earlier response"),
@@ -403,6 +449,9 @@ class RecordingTransport(httpx.BaseTransport):
         self.context: dict[str, str | None] = {"tool": None, "ticker": None}
         self.prices: dict[str, int] = {}
         self.meta_enabled = True
+        # Balance observed during THIS run (None until one is seen). The floor is
+        # checked only against this, never against a balance from an earlier run.
+        self.run_balance: int | None = None
 
     # -- credit endpoints -------------------------------------------------
     def _fetch(self, template: httpx.Request, path: str) -> _Fetched:
@@ -437,6 +486,8 @@ class RecordingTransport(httpx.BaseTransport):
         )
 
     def _record_meta(self, fetched: _Fetched) -> None:
+        if fetched.balance is not None and 0 < fetched.status < 400:
+            self.run_balance = fetched.balance
         self.ledger.record(
             f"{self.phase}:meta",
             tool=fetched.path,
@@ -516,6 +567,7 @@ class RecordingTransport(httpx.BaseTransport):
             tool=tool,
             total_budget=self.total_budget,
             floor=self.floor,
+            balance=self.run_balance,
         )
         before = self.ledger.last_balance
         try:
@@ -534,6 +586,7 @@ class RecordingTransport(httpx.BaseTransport):
                 balance_source="endpoint" if balance is not None else None,
                 balance_before=before,
             )
+            self.run_balance = balance  # None if unknown: the floor then refuses
             if fetched:
                 self._record_meta(fetched)
             raise
@@ -545,7 +598,7 @@ class RecordingTransport(httpx.BaseTransport):
             fetched = self._fallback_balance(request)
             balance = fetched.balance if fetched else None
             source = "endpoint" if balance is not None else None
-        self.ledger.record(
+        entry = self.ledger.record(
             self.phase,
             tool=tool,
             ticker=ticker,
@@ -556,6 +609,12 @@ class RecordingTransport(httpx.BaseTransport):
             credit_header_names=_credit_names(response.headers),
             balance_before=before,
         )
+        if balance is not None:
+            self.run_balance = balance
+        elif entry.cost is not None and self.run_balance is not None:
+            self.run_balance = max(0, self.run_balance - entry.cost)
+        else:
+            self.run_balance = None
         if fetched:
             self._record_meta(fetched)
         return response

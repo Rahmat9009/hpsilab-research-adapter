@@ -14,6 +14,7 @@ import os
 import re
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -232,7 +233,7 @@ class ResearchClient:
     def from_env(
         cls,
         *,
-        phase: str = "cli",
+        phase: str | None = None,
         ledger_path: Path | None = DEFAULT_LEDGER_PATH,
         max_credits: int = DEFAULT_MAX_CREDITS,
         call_cap: int = DEFAULT_CALL_CAP,
@@ -246,6 +247,9 @@ class ResearchClient:
             raise UnsafeConfiguration(
                 f"{ENV_X402_WALLET} is set; refusing to run because the SDK could pay per call."
             )
+        if phase is None:
+            # Unique per client so per-run caps never accumulate across runs.
+            phase = f"lib-{datetime.now(UTC):%Y%m%dT%H%M%S}-{os.getpid()}-{id(object())}"
         ledger = CreditLedger(ledger_path)
         recording = RecordingTransport(
             ledger,
