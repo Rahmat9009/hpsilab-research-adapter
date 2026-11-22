@@ -20,14 +20,17 @@ from pathlib import Path
 from typing import Any
 
 from hpsilab_mcp import CREDITS_ONLY, HpsiMcpClient, HpsiMcpError
+from hpsilab_mcp.client import DEFAULT_BASE_URL
 
 from hpsilab_research_adapter.errors import AuthError, CreditBudgetExceeded, UnsafeConfiguration
-from hpsilab_research_adapter.ledger import CreditLedger, RecordingTransport
+from hpsilab_research_adapter.ledger import CreditLedger, RecordingTransport, make_template
 from hpsilab_research_adapter.policy import (
+    BALANCE_FLOOR,
     ENV_API_KEY,
     ENV_X402_WALLET,
     PROBE_CALL_CAP,
     PROBE_CREDIT_BUDGET,
+    TOTAL_CREDIT_BUDGET,
 )
 from hpsilab_research_adapter.tools import TOOLS
 
@@ -129,9 +132,15 @@ def main(argv: list[str] | None = None) -> int:
 
     ledger = CreditLedger(ROOT / ".credits" / "ledger.json")
     transport = RecordingTransport(
-        ledger, PHASE, budget=PROBE_CREDIT_BUDGET, call_cap=PROBE_CALL_CAP
+        ledger,
+        PHASE,
+        budget=PROBE_CREDIT_BUDGET,
+        call_cap=PROBE_CALL_CAP,
+        total_budget=TOTAL_CREDIT_BUDGET,
+        floor=BALANCE_FLOOR,
     )
     client = HpsiMcpClient(api_key=api_key, transport=transport, payment_mode=CREDITS_ONLY)
+    template = make_template(DEFAULT_BASE_URL, api_key)
     del api_key
     if client.payment_policy.pays:
         raise UnsafeConfiguration("SDK payment policy would pay per call; refusing to run.")
@@ -139,9 +148,27 @@ def main(argv: list[str] | None = None) -> int:
     SCHEMAS.mkdir(exist_ok=True)
     RAW.mkdir(exist_ok=True)
     report = []
+
+    # Step 1: prove the credit endpoints are free before relying on them.
+    names = {s.name for s in TOOLS.values()} | {s.sdk_method for s in TOOLS.values()}
+    free = transport.verify_meta_free(template, names)
+    for spec in TOOLS.values():  # key prices by SDK tool name, whichever name matched
+        if spec.sdk_method not in transport.prices and spec.name in transport.prices:
+            transport.prices[spec.sdk_method] = transport.prices[spec.name]
+    print(
+        f"credit endpoints: free={free['free']} statuses={free['statuses']} "
+        f"balances={free['balances']} charged={free['charged_headers']}"
+    )
+    print(f"catalog prices (SDK tool -> credits): {free['prices']}")
+    if not free["free"]:
+        print("STOPPED before any tool call: credit endpoints not proven free.")
+        client.close()
+        return 1
+    start_balance = free["balances"][-1]
+
     try:
         for spec in TOOLS.values():
-            transport.context = {"tool": spec.name, "ticker": ticker}
+            transport.context = {"tool": spec.sdk_method, "ticker": ticker}
             method = getattr(client, spec.sdk_method)
             kwargs = {"include_metadata": True} if spec.supports_metadata else {}
             outcome = "ok"
@@ -178,18 +205,23 @@ def main(argv: list[str] | None = None) -> int:
                 report.append(("-", "STOPPED: no credit balance header on the response"))
                 break
     finally:
+        end_balance = transport.read_balance(template)
         client.close()
 
     print(f"ticker={ticker}")
     for name, outcome in report:
         print(f"  {name:20s} {outcome}")
+    per_call = [(e.tool, e.status, e.cost) for e in ledger.entries if e.phase == PHASE]
+    print(f"per call (tool, status, credits): {per_call}")
     print(
-        f"probe calls={ledger.calls(PHASE)} credits~={ledger.spent(PHASE)} "
-        f"(unknown-cost calls={ledger.unknown_cost_calls(PHASE)}) "
-        f"balance_after={ledger.last_balance} blind={ledger.blind}"
+        f"probe tool calls={ledger.calls(PHASE)} credits={ledger.spent(PHASE)} "
+        f"(unknown-cost={ledger.unknown_cost_calls(PHASE)}) "
+        f"balance {start_balance} -> {end_balance} "
+        f"(endpoint delta {None if None in (start_balance, end_balance) else start_balance - end_balance}) "
+        f"blind={ledger.blind}"
     )
-    names = sorted({n for e in ledger.entries for n in e.credit_header_names})
-    print(f"credit-related response header names seen: {names}")
+    seen = sorted({n for e in ledger.entries for n in e.credit_header_names})
+    print(f"credit-related response header names seen: {seen}")
     return 0
 
 
