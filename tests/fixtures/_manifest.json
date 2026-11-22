@@ -1,18 +1,21 @@
 {
   "description": "Test inventory metadata only; this is not a provider response or an API schema.",
-  "provenance": "All existing response fixtures are fabricated empty objects.",
-  "full_response_compatibility_verified": false,
+  "provenance": "All 18 response fixtures are fabricated: six empty objects, six full responses and six missing-field responses with invented values. Shapes come from a live probe of hpsilab-mcp 0.14.2 (keys and JSON types only). No provider values copied.",
+  "full_response_compatibility_verified": true,
   "methods": {
     "ai_prediction": {
-      "schema_status": "pending",
+      "schema_status": "probed",
+      "schema_source": "schemas/ai_prediction.shape.json (hpsilab-mcp 0.14.2, probed 2026-11-22)",
       "variants": {
         "full": {
           "file": "ai_prediction_full.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready"
         },
         "missing_field": {
           "file": "ai_prediction_missing_field.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready",
+          "omitted_field": "model_name",
+          "omitted_location": "data[0]"
         },
         "empty": {
           "file": "ai_prediction_empty.json",
@@ -21,15 +24,17 @@
       }
     },
     "iv_radar": {
-      "schema_status": "pending",
+      "schema_status": "probed",
+      "schema_source": "schemas/iv_radar.shape.json (hpsilab-mcp 0.14.2, probed 2026-11-22)",
       "variants": {
         "full": {
           "file": "iv_radar_full.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready"
         },
         "missing_field": {
           "file": "iv_radar_missing_field.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready",
+          "omitted_field": "count"
         },
         "empty": {
           "file": "iv_radar_empty.json",
@@ -38,15 +43,17 @@
       }
     },
     "option_pressure": {
-      "schema_status": "pending",
+      "schema_status": "probed",
+      "schema_source": "schemas/option_pressure.shape.json (hpsilab-mcp 0.14.2, probed 2026-11-22)",
       "variants": {
         "full": {
           "file": "option_pressure_full.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready"
         },
         "missing_field": {
           "file": "option_pressure_missing_field.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready",
+          "omitted_field": "max_pain"
         },
         "empty": {
           "file": "option_pressure_empty.json",
@@ -55,15 +62,17 @@
       }
     },
     "monte_carlo": {
-      "schema_status": "pending",
+      "schema_status": "probed",
+      "schema_source": "schemas/monte_carlo.shape.json (hpsilab-mcp 0.14.2, probed 2026-11-22)",
       "variants": {
         "full": {
           "file": "monte_carlo_full.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready"
         },
         "missing_field": {
           "file": "monte_carlo_missing_field.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready",
+          "omitted_field": "volatility"
         },
         "empty": {
           "file": "monte_carlo_empty.json",
@@ -72,15 +81,17 @@
       }
     },
     "analyze_stock": {
-      "schema_status": "pending",
+      "schema_status": "probed",
+      "schema_source": "schemas/analyze_stock.shape.json (hpsilab-mcp 0.14.2, probed 2026-11-22)",
       "variants": {
         "full": {
           "file": "analyze_stock_full.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready"
         },
         "missing_field": {
           "file": "analyze_stock_missing_field.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready",
+          "omitted_field": "summary"
         },
         "empty": {
           "file": "analyze_stock_empty.json",
@@ -89,15 +100,17 @@
       }
     },
     "pretrade_risk_scan": {
-      "schema_status": "pending",
+      "schema_status": "probed",
+      "schema_source": "schemas/pretrade_risk_scan.shape.json (hpsilab-mcp 0.14.2, probed 2026-11-22)",
       "variants": {
         "full": {
           "file": "pretrade_risk_scan_full.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready"
         },
         "missing_field": {
           "file": "pretrade_risk_scan_missing_field.json",
-          "status": "schema_pending"
+          "status": "synthetic_ready",
+          "omitted_field": "regime"
         },
         "empty": {
           "file": "pretrade_risk_scan_empty.json",

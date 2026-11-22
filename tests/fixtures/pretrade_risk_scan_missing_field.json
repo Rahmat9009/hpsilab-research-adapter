@@ -1,0 +1,122 @@
+{
+  "symbol": "TEST",
+  "asOf": "fake-as-of",
+  "riskDeltas": [
+    {
+      "label": "fake-label",
+      "beforeValue": 0.5,
+      "afterValue": 1.25,
+      "unit": "fake-unit",
+      "higherIsRiskier": false
+    }
+  ],
+  "regimeConfidence": 0.5,
+  "distribution": {
+    "bins": [
+      0.5,
+      1.25
+    ],
+    "frequencies": [
+      1,
+      2
+    ],
+    "kde_x": [
+      0.5,
+      1.25
+    ],
+    "kde_y": [
+      0.5,
+      1.25
+    ]
+  },
+  "range_90": {
+    "lower": 0.5,
+    "upper": 1.25
+  },
+  "mean": 0.5,
+  "threshold": 1.25,
+  "sizingChecks": [
+    {
+      "label": "fake-label",
+      "status": "fake-status",
+      "detail": "fake-detail"
+    }
+  ],
+  "exposure": {
+    "available": false,
+    "reason": "fake-reason",
+    "bySector": [],
+    "bySymbol": [],
+    "concentrationFlag": "fake-flag",
+    "assumedPositionWeight": null,
+    "weightingMethod": "fake-method"
+  },
+  "correlation": {
+    "available": false,
+    "reason": "fake-reason",
+    "aggregate": null,
+    "matrix": null
+  },
+  "methodology": {
+    "benchmark": "fake-benchmark",
+    "benchmarkFallback": false,
+    "windowStart": "fake-window-start",
+    "windowEnd": "fake-window-end",
+    "lookbackCalendarDays": 1,
+    "observations": 2,
+    "returns": "fake-returns",
+    "annualizationDays": 1,
+    "var": {
+      "method": "fake-method",
+      "confidence": 0.5,
+      "horizonDays": 1
+    },
+    "beta": {
+      "returns": "fake-returns",
+      "benchmark": "fake-benchmark"
+    },
+    "maxDrawdownDays": 1,
+    "riskDeltas": {
+      "beforeValue": "fake-before",
+      "afterValue": "fake-after",
+      "isPortfolio": false,
+      "note": "fake-note"
+    },
+    "monteCarlo": {
+      "model": "fake-model",
+      "horizonDays": 1,
+      "paths": 2,
+      "seeded": false
+    },
+    "thresholds": {
+      "volatilityPct": {
+        "warn": 1,
+        "fail": 2
+      },
+      "maxDrawdownPct": {
+        "warn": 1,
+        "fail": 2
+      },
+      "beta": {
+        "warn": 0.5,
+        "fail": 1.25
+      },
+      "turnoverBelow": {
+        "warn": 1,
+        "fail": 2
+      },
+      "symbolWeight": {
+        "warn": 0.5,
+        "fail": 1.25
+      },
+      "sectorWeight": {
+        "warn": 0.5,
+        "fail": 1.25
+      },
+      "correlation": {
+        "moderate": 0.5,
+        "high": 1.25
+      }
+    }
+  }
+}
