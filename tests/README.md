@@ -129,4 +129,4 @@ download environments. Hooks run staged secret scanning, AST boundary tests
 and ruff. Before an initial commit, stage the intended files so the staged scan
 has content. Install the hook for subsequent commits even when gitleaks is
 unavailable: it will fail closed until the binary is supplied. See the recorded
-verification status before relying on this scaffold's scanner configuration.
+verification status in `DELIVERY.md` before relying on the scanner configuration.

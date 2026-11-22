@@ -76,8 +76,9 @@ pytest, ruff check, and ruff format. Nothing is downloaded.
   is a single 402 retry, which needs a wallet. Retries are therefore ours alone.
 * A 401 opens the SDK's auth circuit breaker, after which every call raises
   `HpsiMcpConfigError`. The client also has a breaker for insufficient credits.
-* The SDK never reads `X-Credits-Remaining`, and there is no balance endpoint. We
-  capture the header through `HpsiMcpClient(transport=...)` (`ledger.RecordingTransport`).
+* The SDK never reads `X-Credits-Remaining` and has no balance method. (Its README,
+  read later, documents `GET /api/credits/balance` and `/api/credits/catalog`, which
+  the ledger now uses.) We capture the header through `HpsiMcpClient(transport=...)` (`ledger.RecordingTransport`).
 * `include_metadata` exists only on `get_ai_prediction`.
 * With no key and no wallet, the SDK sends `X-HPSILAB-Payment-Mode: anonymous`.
   We raise `AuthError` before constructing the client.

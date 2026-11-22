@@ -1,5 +1,8 @@
 # Verification record — November 16, 2026
 
+> Historical record of the offline scaffold on `test/hpsilab-fixtures-safety`.
+> It does not describe the v0.1.0 adapter; see `DELIVERY.md` for current results.
+
 Repository: `C:\Projects\ALPACA\hpsilab-research-adapter`
 Branch: `test/hpsilab-fixtures-safety`
 Scope: local Python CLI scaffold and offline test infrastructure. No remote, push,

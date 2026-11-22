@@ -14,8 +14,6 @@ A read-only Python command-line tool and library that wraps six HPSILab research
 
 ## About HPSILab
 
-<!-- About HPSILab: owner may replace with the approved wording drafted earlier -->
-
 HPSILab operates the research API that this adapter calls. Website: https://hpsilab.com
 
 The adapter uses the `hpsilab-mcp` Python SDK, version 0.14.2, published on PyPI. The package metadata lists the author as Haiyun Hu and describes the SDK as a Python SDK for the HPSILab quantitative finance API (options analytics, IV surface modeling, Monte Carlo simulation, and AI-driven predictions).
@@ -85,11 +83,14 @@ options:
   --tool {all,analyze_stock,ai_prediction,iv_radar,option_pressure,pretrade_risk_scan,monte_carlo}
                         research tool to run (default: all)
   --json                print a JSON array, not text
-  --max-credits N       credit cap for this run (default: 20)
+  --max-credits N       credit cap for this run (default: 50; one pass over
+                        all six tools was observed to cost 38 credits)
   --min-balance N       stop if the account balance would drop below N
                         (default: none)
-  --total-credits N     total credit budget across runs (default: none)
-  --ledger PATH         credit ledger file (default: .credits/ledger.json)
+  --total-credits N     total credit budget across runs, needs the ledger
+                        (default: none)
+  --ledger PATH         credit ledger file (default: .credits/ledger.json,
+                        relative to the current directory)
   --no-ledger           do not persist a credit ledger
   --status              show configuration status, no network access
   --version             show program's version number and exit
@@ -108,17 +109,21 @@ hpsilab AAPL SPY --tool all --json
 
 Tickers are case-insensitive and are converted to upper case. A ticker starts with a letter and may contain letters, digits, `.` and `-`, up to 10 characters in total. `--tool all` is the default. Each ticker and tool pair is one planned request, so `AAPL SPY --tool all` plans 12 requests.
 
-Text output prints one block per result. `--json` prints a JSON array of the same results. If a run stops with an error, the results already completed are printed first, and the error message goes to stderr.
+Text output prints one block per result. `--json` prints a JSON array of the successful results; errors always go to stderr.
+
+If one call fails with `RateLimited`, `Timeout` or `UpstreamError`, the CLI reports it on stderr (with the ticker and tool) and continues with the next call; the run then exits with code 5. An authentication, configuration or credit error stops the run immediately, because it would affect every later call. Completed results are always printed, even when the run stops.
 
 ### Credit flags
 
 | Flag | Default | Meaning |
 | --- | --- | --- |
-| `--max-credits N` | 20 | Credit cap for this run. |
-| `--min-balance N` | none | Stop if the account balance would drop below N. |
-| `--total-credits N` | none | Total credit budget across runs, enforced from the persisted ledger. |
-| `--ledger PATH` | `.credits/ledger.json` | Ledger file that records every request. Cannot be combined with `--no-ledger`. |
+| `--max-credits N` | 50 | Credit cap for this run. |
+| `--min-balance N` | none | Refuse a request if the account balance would drop below N. With a floor set, a request is also refused when the balance cannot be determined. |
+| `--total-credits N` | none | Total credit budget across runs, enforced from the persisted ledger. A usage error with `--no-ledger`. |
+| `--ledger PATH` | `.credits/ledger.json` | Ledger file that records every request, relative to the current directory. Cannot be combined with `--no-ledger`. |
 | `--no-ledger` | off | Do not persist a ledger. The per-run limits still apply in memory. |
+
+These limits are checked before each request using the reserved price described under [Credits and safety](#credits-and-safety). The actual charge is only known afterwards, so a single call can overshoot a cap by at most the difference between its real price and the reserved price.
 
 ### Exit codes
 
@@ -129,7 +134,7 @@ Text output prints one block per result. `--json` prints a JSON array of the sam
 | 2 | Usage error, for example an invalid ticker, a negative budget or an unknown `--tool`. | argparse errors |
 | 3 | Authentication or configuration problem. | `AuthError` (key missing, or HPSILab rejected it), `UnsafeConfiguration` (`HPSILAB_X402_PRIVATE_KEY` is set) |
 | 4 | Credit problem. | `CreditsExhausted` (the account cannot pay for the call), `CreditBudgetExceeded` (a local cap, the total budget or the balance floor would be crossed; refused before sending) |
-| 5 | Upstream problem that persisted after the retry policy. | `RateLimited`, `Timeout`, `UpstreamError` |
+| 5 | At least one call failed with an upstream problem after the retry policy; other calls still ran. | `RateLimited`, `Timeout`, `UpstreamError` (including a response that does not match the expected shape) |
 
 ### Library example
 
@@ -142,20 +147,28 @@ with ResearchClient.from_env(ledger_path=None, max_credits=10, call_cap=6) as cl
         print(result.tool, result.ticker, sorted(result.data))
 ```
 
-`ResearchClient.from_env(...)` reads `HPSILAB_API_KEY` and raises `AuthError` if it is missing. `client.run(tool, ticker)` takes one of the six CLI tool names and returns a `Result` (from `hpsilab_research_adapter.types`) with the fields `tool`, `ticker`, `data`, `horizon`, `source_fields`, `missing_fields` and `error`. On failure it raises the adapter error for that case instead.
+`ResearchClient.from_env(...)` reads `HPSILAB_API_KEY` and raises `AuthError` if it is missing. `client.run(tool, ticker)` takes one of the six CLI tool names and returns a `Result` (from `hpsilab_research_adapter.types`) with the fields `tool`, `ticker`, `data`, `horizon`, `source_fields`, `missing_fields` and `error`. On failure it raises the adapter error for that case instead, so a returned `Result` always has `error=None`; the field is reserved.
+
+`ResearchClient(api_key)` constructed directly, without `from_env`, still installs an in-memory credit ledger with a 50-credit budget per client.
 
 ## Credits and safety
 
-Billing is in Credits. Every request goes through the credit ledger, including retries. Before a request is sent, the ledger checks:
+Billing is in Credits. Every HTTP request the adapter sends passes through the credit ledger and is recorded: tool calls, every retry attempt, attempts that end without a response (for example a read timeout), and the credit-endpoint reads described below.
+
+At the start of each run the adapter reads two read-only endpoints: `GET /api/credits/catalog` (tool prices) and `GET /api/credits/balance`. The first time a ledger is used it reads the balance twice, the catalog, and the balance again, and uses these endpoints only if the balance did not move; otherwise it stops using them for that run. A successful balance read also clears a blind ledger (see below).
+
+Before each tool request, the ledger checks:
 
 - the per-run credit budget (`--max-credits`),
 - the optional total budget across runs (`--total-credits`),
-- the optional balance floor (`--min-balance`),
-- and the per-run call cap, which is the number of planned requests times the three attempt limit.
+- the optional balance floor (`--min-balance`), which refuses the request if the balance is unknown,
+- and the per-run call cap, which is the number of planned requests times the three-attempt limit.
 
-Before each request, the ledger reserves the tool's catalog price when one is loaded. Otherwise it reserves the largest per-call cost recorded so far, or 1 Credit if none is recorded.
+The price reserved for a request is the tool's catalog price when the catalog lists it; otherwise the largest cost previously recorded for that tool; otherwise 20 Credits (above the largest single-call cost observed when this adapter was built, 15 Credits).
 
-After each response, the ledger reads `X-Credits-Charged` and `X-Credits-Remaining`. If the balance header is missing, the ledger calls `GET /api/credits/balance`. If that also fails to give a balance, the ledger becomes blind: it refuses every later request while it stays blind.
+After each response, the ledger takes the cost from `X-Credits-Charged`, or from the drop in `X-Credits-Remaining`. If the balance header is missing, it calls `GET /api/credits/balance`. A cost is never assumed to be zero without evidence: an HTTP error status counts as 0 (the SDK README states failed calls are not charged); a negative charge, a balance increase (for example a top-up) or a missing balance count as unknown, and unknown costs count as at least 20 Credits in every budget. If the cost of a tool request cannot be established (for example a response without credit headers, or a transport failure, while the balance endpoint is also unavailable), the ledger becomes blind and refuses further tool requests until a later balance read succeeds, normally at the start of the next run. An unreadable ledger file refuses every request; move or fix the file.
+
+The ledger file is not locked. Do not run two processes on the same ledger file at once.
 
 Retry policy:
 
@@ -163,9 +176,9 @@ Retry policy:
 - Timeouts: 1 attempt only. A timed-out request may already have been billed, so it is not repeated.
 - Credit and authentication errors: never retried.
 
-Failed calls are not charged, per the SDK README. The SDK itself does not retry, so every retry is made by the adapter and is counted in the ledger.
+The SDK itself does not retry, so every retry is made by the adapter, and each attempt is checked and recorded by the ledger.
 
-The adapter calls only the six read-only SDK methods listed above. It does not place, submit, route or execute orders, and it has no broker integration.
+The adapter calls only the six read-only SDK methods listed above, plus the two read-only credit endpoints. It does not place, submit, route or execute orders, and it has no broker integration.
 
 ## Development
 

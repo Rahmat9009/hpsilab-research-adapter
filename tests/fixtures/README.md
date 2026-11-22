@@ -1,6 +1,6 @@
 # Synthetic fixture inventory
 
-Every response value in this directory is fabricated. No provider calls were made.
+Every response value in this directory is fabricated. The shapes they follow come from a live probe (`schemas/`), but no provider value was copied into a fixture.
 Shapes come from a live probe of hpsilab-mcp 0.14.2 (keys and JSON types only);
 no provider values were copied.
 

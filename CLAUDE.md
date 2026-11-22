@@ -34,11 +34,13 @@ infrastructure and is changed only by the orchestrator.
   appear anywhere in an exception chain.
 
 ## Credits, not calls
-- Every live request goes through `ledger.RecordingTransport`, which reads
-  `X-Credits-Remaining` and persists `.credits/ledger.json`.
-- Budgets: probe 60, ship check 60, total 150. Stop if the balance would drop below 1,800.
-- If a response has no balance header, the ledger goes blind and refuses further requests.
-- Retries go through the same transport, so they are counted and capped.
+- Every live request (tool calls, retries, transport failures, credit-endpoint reads)
+  goes through `ledger.RecordingTransport` and is recorded in `.credits/ledger.json`.
+- Budgets: probe 60, total 150 (the ship check uses what remains). Stop if the balance
+  would drop below 1,800.
+- Costs come from `X-Credits-Charged`, else the drop in `X-Credits-Remaining`, else
+  `GET /api/credits/balance`. If none gives a cost, the ledger goes blind until a later
+  balance read succeeds. See the `ledger.py` docstring for the full guarantees.
 
 ## Hard rules
 - Never commit real HPSILab values. Shapes record keys and types only. Raw data stays in `.probe/`.
