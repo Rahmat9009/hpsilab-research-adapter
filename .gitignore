@@ -12,3 +12,7 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Live probe raw responses and credit ledger: never committed
+.probe/
+.credits/

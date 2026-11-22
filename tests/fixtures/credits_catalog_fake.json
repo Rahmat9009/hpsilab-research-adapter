@@ -1,0 +1,57 @@
+{
+  "_generated": "fake-fixture",
+  "price_version": "fake-v0",
+  "tools": [
+    {
+      "canonical_tool_name": "analyze_stock",
+      "aliases": [],
+      "credits": 7,
+      "active": true,
+      "rest_path_patterns": ["/api/analyze_stock/*"],
+      "x402_payable": false
+    },
+    {
+      "canonical_tool_name": "analyze_stock",
+      "aliases": [],
+      "credits": 99,
+      "active": false,
+      "rest_path_patterns": ["/api/analyze_stock/*"],
+      "x402_payable": false
+    },
+    {
+      "canonical_tool_name": "fake_prediction_v2",
+      "aliases": ["get_ai_prediction"],
+      "credits": 9,
+      "active": true,
+      "rest_path_patterns": ["/api/ai_prediction/*"]
+    },
+    {
+      "canonical_tool_name": "fake_iv_batch",
+      "aliases": [],
+      "credits": 11,
+      "active": true,
+      "rest_path_patterns": ["/api/iv_batch*"]
+    },
+    {
+      "canonical_tool_name": "get_option_pressure",
+      "aliases": [],
+      "credits": 13,
+      "active": "true",
+      "rest_path_patterns": ["/api/option_pressure/*"]
+    },
+    {
+      "canonical_tool_name": "get_monte_carlo",
+      "aliases": [],
+      "credits": 1,
+      "active": true,
+      "rest_path_patterns": ["/api/monte_carlo/*", "/api/montecarlo/*"]
+    },
+    {
+      "canonical_tool_name": "fake_generate_report",
+      "aliases": [],
+      "credits": 50,
+      "active": true,
+      "rest_path_patterns": []
+    }
+  ]
+}

@@ -1,3 +1,3 @@
-"""Standalone research-only adapter scaffold; no SDK or broker integration."""
+"""Read-only research adapter for six HPSILab tools. No broker, order or Mizan integration."""
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"

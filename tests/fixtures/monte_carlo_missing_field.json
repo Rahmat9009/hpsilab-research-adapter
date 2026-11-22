@@ -1,0 +1,54 @@
+{
+  "ticker": "TEST",
+  "horizon_days": 1,
+  "data_as_of": "fake-data-as-of",
+  "start_price": 1.25,
+  "support": 0.5,
+  "threshold": 1.25,
+  "resistance": 1.25,
+  "prob_below": 0.5,
+  "prob_above": 0.5,
+  "mean_price": 1.25,
+  "median_price": 1.25,
+  "lower_bound": 0.5,
+  "upper_bound": 1.25,
+  "std_tomorrow": 0.5,
+  "ci": 0.5,
+  "final_prices": [
+    0.5,
+    1.25
+  ],
+  "distribution": {
+    "paths": 2,
+    "percentiles": {
+      "p5": 0.5,
+      "p25": 0.5,
+      "p50": 1.25,
+      "p75": 1.25,
+      "p95": 1.25
+    },
+    "histogram": {
+      "edges": [
+        0.5,
+        1.25
+      ],
+      "counts": [
+        1,
+        2
+      ]
+    },
+    "kde": {
+      "method": "fake-method",
+      "scale": "fake-scale",
+      "x": [
+        0.5,
+        1.25
+      ],
+      "y": [
+        0.5,
+        1.25
+      ]
+    }
+  },
+  "msg": "fake-msg"
+}

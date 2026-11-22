@@ -1,0 +1,45 @@
+{
+  "symbol": "TEST",
+  "status": "fake-status",
+  "successfulTools": 1,
+  "failedTools": 2,
+  "warnings": [],
+  "signal": "fake-signal",
+  "confidence_score": 1,
+  "confidence_score_meaning": "fake-confidence-meaning",
+  "options_coverage": "fake-options-coverage",
+  "bullish_factors": [
+    "fake-bullish-factor"
+  ],
+  "bearish_factors": [
+    "fake-bearish-factor"
+  ],
+  "summary": "fake-summary",
+  "disclaimer": "fake-disclaimer",
+  "tool_responses": {
+    "get_ai_prediction": {
+      "status": "fake-status",
+      "response": "fake-response"
+    },
+    "get_iv_radar": {
+      "status": "fake-status",
+      "response": "fake-response"
+    },
+    "get_option_pressure": {
+      "status": "fake-status",
+      "response": "fake-response"
+    },
+    "get_equity_curve": {
+      "status": "fake-status",
+      "response": "fake-response"
+    },
+    "get_monte_carlo": {
+      "status": "fake-status",
+      "response": "fake-response"
+    },
+    "get_equity_curves": {
+      "status": "fake-status",
+      "response": "fake-response"
+    }
+  }
+}
