@@ -11,6 +11,7 @@ import pytest
 
 from hpsilab_research_adapter import __version__, errors, tools
 from hpsilab_research_adapter.cli import main
+from hpsilab_research_adapter.policy import MAX_ATTEMPTS
 from hpsilab_research_adapter.types import Result
 
 SECRET = "fake-key-for-tests-0001"
@@ -248,11 +249,11 @@ def test_flags_pass_through_to_factory(factory: FakeFactory) -> None:
         client_factory=factory,
     )
     assert rc == 0
+    assert factory.kwargs.pop("phase").startswith("cli-")
     assert factory.kwargs == {
-        "phase": "cli",
         "ledger_path": Path("custom/ledger.json"),
         "max_credits": 7,
-        "call_cap": 1,
+        "call_cap": 1 * MAX_ATTEMPTS,
         "total_budget": 40,
         "min_balance": 1900,
     }
@@ -260,11 +261,11 @@ def test_flags_pass_through_to_factory(factory: FakeFactory) -> None:
 
 def test_default_flags_reach_factory(factory: FakeFactory) -> None:
     assert main(["NVDA"], client_factory=factory) == 0
+    assert factory.kwargs.pop("phase").startswith("cli-")
     assert factory.kwargs == {
-        "phase": "cli",
         "ledger_path": Path(".credits/ledger.json"),
         "max_credits": 20,
-        "call_cap": len(ALL_TOOLS),
+        "call_cap": len(ALL_TOOLS) * MAX_ATTEMPTS,
         "total_budget": None,
         "min_balance": None,
     }

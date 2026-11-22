@@ -19,10 +19,12 @@ import re
 import sys
 import textwrap
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from hpsilab_research_adapter import __version__, errors, policy, tools
+from hpsilab_research_adapter.policy import MAX_ATTEMPTS
 from hpsilab_research_adapter.types import Result
 
 ClientFactory = Callable[..., Any]
@@ -212,11 +214,15 @@ def main(argv: Sequence[str] | None = None, *, client_factory: ClientFactory | N
     factory = client_factory if client_factory is not None else _load_client_factory()
     results: list[Result] = []
     try:
+        # Per-run phase id: --max-credits and the call cap are per run, while the
+        # persisted ledger still enforces --total-credits across all runs.
+        run_phase = f"{PHASE}-{datetime.now(UTC):%Y%m%dT%H%M%S}-{os.getpid()}"
         client = factory(
-            phase=PHASE,
+            phase=run_phase,
             ledger_path=ledger_path,
             max_credits=args.max_credits,
-            call_cap=len(planned),
+            # Every attempt, retries included, passes through the ledger's call cap.
+            call_cap=len(planned) * MAX_ATTEMPTS,
             total_budget=args.total_credits,
             min_balance=args.min_balance,
         )
