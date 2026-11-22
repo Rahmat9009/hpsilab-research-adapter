@@ -1,4 +1,4 @@
-"""Run the offline CLI with python -m hpsilab_research_adapter."""
+"""Run the research CLI with python -m hpsilab_research_adapter."""
 
 from hpsilab_research_adapter.cli import main
 
