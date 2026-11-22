@@ -174,19 +174,17 @@ def test_invalid_tool_exits_2(tool: str, factory: FakeFactory) -> None:
     assert factory.kwargs is None
 
 
-@pytest.mark.parametrize(
-    ("error_cls", "exit_code"),
-    [
-        (errors.AuthError, 3),
-        (errors.UnsafeConfiguration, 3),
-        (errors.CreditsExhausted, 4),
-        (errors.CreditBudgetExceeded, 4),
-        (errors.RateLimited, 5),
-        (errors.Timeout, 5),
-        (errors.UpstreamError, 5),
-    ],
-)
-def test_adapter_errors_map_to_exit_codes(
+STOPPING = [
+    (errors.AuthError, 3),
+    (errors.UnsafeConfiguration, 3),
+    (errors.CreditsExhausted, 4),
+    (errors.CreditBudgetExceeded, 4),
+]
+PER_CALL = [errors.RateLimited, errors.Timeout, errors.UpstreamError]
+
+
+@pytest.mark.parametrize(("error_cls", "exit_code"), STOPPING)
+def test_stopping_errors_map_to_exit_codes(
     capsys: pytest.CaptureFixture[str],
     error_cls: type[errors.AdapterError],
     exit_code: int,
@@ -197,6 +195,18 @@ def test_adapter_errors_map_to_exit_codes(
     assert capsys.readouterr().err == f"error: {error_cls.__name__}: fabricated failure\n"
 
 
+@pytest.mark.parametrize("error_cls", PER_CALL)
+def test_per_call_error_exits_5_and_names_the_call(
+    capsys: pytest.CaptureFixture[str], error_cls: type[errors.AdapterError]
+) -> None:
+    client = FakeClient({("analyze_stock", "NVDA"): error_cls("fabricated failure")})
+    rc = main(["NVDA", "--tool", "analyze_stock"], client_factory=FakeFactory(client))
+    assert rc == 5
+    assert capsys.readouterr().err == (
+        f"error: {error_cls.__name__}: fabricated failure (NVDA analyze_stock)\n"
+    )
+
+
 def test_missing_key_raised_by_factory_exits_3(capsys: pytest.CaptureFixture[str]) -> None:
     def factory(**kwargs: Any) -> Any:
         raise errors.AuthError("HPSILAB_API_KEY is not set")
@@ -205,24 +215,83 @@ def test_missing_key_raised_by_factory_exits_3(capsys: pytest.CaptureFixture[str
     assert "error: AuthError: HPSILAB_API_KEY is not set" in capsys.readouterr().err
 
 
-def test_partial_results_printed_before_error(capsys: pytest.CaptureFixture[str]) -> None:
-    client = FakeClient({("ai_prediction", "NVDA"): errors.RateLimited("fabricated limit")})
+@pytest.mark.parametrize("error_cls", PER_CALL)
+def test_per_call_failure_continues_with_next_calls(
+    capsys: pytest.CaptureFixture[str], error_cls: type[errors.AdapterError]
+) -> None:
+    client = FakeClient({("ai_prediction", "NVDA"): error_cls("fabricated limit")})
     rc = main(["NVDA"], client_factory=FakeFactory(client))
     assert rc == 5
+    assert [tool for tool, _ in client.calls] == list(ALL_TOOLS)
+    assert client.closed
+    captured = capsys.readouterr()
+    assert "== analyze_stock NVDA ==" in captured.out
+    assert "== iv_radar NVDA ==" in captured.out
+    assert "== ai_prediction" not in captured.out
+    assert captured.err == (f"error: {error_cls.__name__}: fabricated limit (NVDA ai_prediction)\n")
+
+
+def test_one_failing_ticker_does_not_abort_the_others(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient({("iv_radar", "BAD"): errors.UpstreamError("fabricated 404")})
+    rc = main(["bad", "msft", "--tool", "iv_radar", "--json"], client_factory=FakeFactory(client))
+    assert rc == 5
+    assert client.calls == [("iv_radar", "BAD"), ("iv_radar", "MSFT")]
+    captured = capsys.readouterr()
+    assert [row["ticker"] for row in json.loads(captured.out)] == ["MSFT"]
+    assert "(BAD iv_radar)" in captured.err
+
+
+@pytest.mark.parametrize(("error_cls", "exit_code"), STOPPING)
+def test_stopping_error_ends_run_but_emits_completed_results(
+    capsys: pytest.CaptureFixture[str],
+    error_cls: type[errors.AdapterError],
+    exit_code: int,
+) -> None:
+    client = FakeClient({("ai_prediction", "NVDA"): error_cls("fabricated stop")})
+    rc = main(["NVDA"], client_factory=FakeFactory(client))
+    assert rc == exit_code
     assert client.calls == [("analyze_stock", "NVDA"), ("ai_prediction", "NVDA")]
     assert client.closed
     captured = capsys.readouterr()
     assert "== analyze_stock NVDA ==" in captured.out
-    assert "== ai_prediction" not in captured.out
-    assert captured.err == "error: RateLimited: fabricated limit\n"
+    assert captured.err == f"error: {error_cls.__name__}: fabricated stop\n"
 
 
-def test_partial_results_in_json_before_error(capsys: pytest.CaptureFixture[str]) -> None:
+def test_stopping_error_after_per_call_failure_wins(capsys: pytest.CaptureFixture[str]) -> None:
+    client = FakeClient(
+        {
+            ("analyze_stock", "NVDA"): errors.Timeout("fabricated timeout"),
+            ("ai_prediction", "NVDA"): errors.CreditsExhausted("fabricated exhausted"),
+        }
+    )
+    assert main(["NVDA"], client_factory=FakeFactory(client)) == 4
+    assert len(client.calls) == 2
+    assert "Timeout" in capsys.readouterr().err
+
+
+def test_json_output_has_results_only_failures_go_to_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     client = FakeClient({("ai_prediction", "NVDA"): errors.Timeout("fabricated timeout")})
     rc = main(["NVDA", "--json"], client_factory=FakeFactory(client))
     assert rc == 5
-    rows = json.loads(capsys.readouterr().out)
-    assert [row["tool"] for row in rows] == ["analyze_stock"]
+    captured = capsys.readouterr()
+    rows = json.loads(captured.out)
+    assert [row["tool"] for row in rows] == [t for t in ALL_TOOLS if t != "ai_prediction"]
+    assert "Timeout" in captured.err
+    assert "Timeout" not in captured.out
+
+
+def test_unexpected_exception_propagates_after_partial_results(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    client = FakeClient({("ai_prediction", "NVDA"): RuntimeError("fabricated bug")})
+    with pytest.raises(RuntimeError, match="fabricated bug"):
+        main(["NVDA"], client_factory=FakeFactory(client))
+    assert client.closed
+    assert "== analyze_stock NVDA ==" in capsys.readouterr().out
 
 
 def test_unexpected_exception_propagates() -> None:
@@ -264,7 +333,7 @@ def test_default_flags_reach_factory(factory: FakeFactory) -> None:
     assert factory.kwargs.pop("phase").startswith("cli-")
     assert factory.kwargs == {
         "ledger_path": Path(".credits/ledger.json"),
-        "max_credits": 20,
+        "max_credits": 50,
         "call_cap": len(ALL_TOOLS) * MAX_ATTEMPTS,
         "total_budget": None,
         "min_balance": None,
@@ -282,3 +351,23 @@ def test_ledger_and_no_ledger_are_mutually_exclusive(factory: FakeFactory) -> No
         main(["NVDA", "--ledger", "x.json", "--no-ledger"], client_factory=factory)
     assert caught.value.code == 2
     assert factory.kwargs is None
+
+
+def test_total_credits_with_no_ledger_is_a_usage_error(
+    capsys: pytest.CaptureFixture[str], factory: FakeFactory
+) -> None:
+    with pytest.raises(SystemExit) as caught:
+        main(["NVDA", "--no-ledger", "--total-credits", "100"], client_factory=factory)
+    assert caught.value.code == 2
+    assert "--total-credits" in capsys.readouterr().err
+    assert factory.kwargs is None
+
+
+def test_help_states_default_credit_cap_and_ledger_location(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        main(["--help"], client_factory=forbidden_factory)
+    out = " ".join(capsys.readouterr().out.split())
+    assert "default: 50" in out
+    assert "relative to the current directory" in out

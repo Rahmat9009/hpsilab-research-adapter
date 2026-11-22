@@ -20,7 +20,7 @@ Horizon key per tool (never inferred, defaulted or computed):
 ai_prediction: ``get_ai_prediction`` returns a McpToolResult whose ``.data`` is a
 list of prediction objects. A list cannot be spread into top-level keys, so it is
 kept unchanged under the single key ``"items"``; source_fields are the union of
-the item keys.
+the item keys, and a field is reported missing if any item lacks it.
 """
 
 from __future__ import annotations
@@ -200,11 +200,14 @@ def normalize(tool: str, ticker: str, raw: Any) -> Result:
     if isinstance(payload, Mapping):
         data: dict[str, Any] = dict(payload)
         keys = set(data)
+        common = keys
     elif isinstance(payload, list) and wrapped:
         if not all(isinstance(item, Mapping) for item in payload):
             raise ValueError("list response items must be objects")
         data = {_LIST_KEY: payload} if payload else {}
         keys = {key for item in payload for key in item}
+        # A field is missing if ANY record lacks it; source_fields stays the union.
+        common = set.intersection(*(set(item) for item in payload)) if payload else set()
     else:
         raise ValueError(f"unsupported raw response type: {type(raw).__name__}")
 
@@ -212,6 +215,7 @@ def normalize(tool: str, ticker: str, raw: Any) -> Result:
         data[_METADATA_KEY] = _plain(metadata)
 
     keys.discard(_METADATA_KEY)
+    common = common - {_METADATA_KEY}
     horizon = None
     horizon_key = _HORIZON_KEYS.get(tool)
     if horizon_key is not None and isinstance(payload, Mapping):
@@ -224,7 +228,7 @@ def normalize(tool: str, ticker: str, raw: Any) -> Result:
         data=data,
         horizon=horizon,
         source_fields=tuple(sorted(keys)),
-        missing_fields=tuple(sorted(EXPECTED_FIELDS[tool] - keys)),
+        missing_fields=tuple(sorted(EXPECTED_FIELDS[tool] - common)),
         error=None,
     )
 

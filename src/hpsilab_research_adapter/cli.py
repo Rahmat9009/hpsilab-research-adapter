@@ -31,7 +31,7 @@ ClientFactory = Callable[..., Any]
 
 PHASE = "cli"
 DEFAULT_LEDGER = ".credits/ledger.json"
-DEFAULT_MAX_CREDITS = 20
+DEFAULT_MAX_CREDITS = 50
 SDK_DISTRIBUTION = "hpsilab-mcp"
 TICKER_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9.\-]{0,9}")
 
@@ -51,6 +51,9 @@ _EXIT_CODES: tuple[tuple[type[errors.AdapterError], int], ...] = (
     (errors.Timeout, EXIT_UPSTREAM),
     (errors.UpstreamError, EXIT_UPSTREAM),
 )
+
+# Failures of one (ticker, tool) call: record, report, carry on with the next call.
+_PER_CALL_ERRORS = (errors.RateLimited, errors.Timeout, errors.UpstreamError)
 
 DESCRIPTION = (
     "HPSILab research-only CLI. Research and analysis only. The tool is read-only:\n"
@@ -106,7 +109,10 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_non_negative_int,
         default=DEFAULT_MAX_CREDITS,
         metavar="N",
-        help=f"credit cap for this run (default: {DEFAULT_MAX_CREDITS})",
+        help=(
+            f"credit cap for this run (default: {DEFAULT_MAX_CREDITS}; "
+            "one pass over all six tools was observed to cost 38 credits)"
+        ),
     )
     parser.add_argument(
         "--min-balance",
@@ -120,14 +126,14 @@ def _build_parser() -> argparse.ArgumentParser:
         type=_non_negative_int,
         default=None,
         metavar="N",
-        help="total credit budget across runs (default: none)",
+        help="total credit budget across runs, needs the ledger (default: none)",
     )
     ledger = parser.add_mutually_exclusive_group()
     ledger.add_argument(
         "--ledger",
         default=DEFAULT_LEDGER,
         metavar="PATH",
-        help=f"credit ledger file (default: {DEFAULT_LEDGER})",
+        help=f"credit ledger file (default: {DEFAULT_LEDGER}, relative to the current directory)",
     )
     ledger.add_argument("--no-ledger", action="store_true", help="do not persist a credit ledger")
     parser.add_argument(
@@ -163,8 +169,6 @@ def _print_text_block(result: Result) -> None:
     print(f"  horizon: {horizon}")
     print(f"  source_fields: {len(result.source_fields)}")
     print(f"  missing_fields: {missing}")
-    if result.error is not None:
-        print(f"  error: {result.error}")
     print("  data:")
     body = json.dumps(result.data, indent=2, sort_keys=True, default=str)
     print(textwrap.indent(body, "    "))
@@ -206,6 +210,11 @@ def main(argv: Sequence[str] | None = None, *, client_factory: ClientFactory | N
         parser.print_help()
         return EXIT_OK
 
+    if args.no_ledger and args.total_credits is not None:
+        parser.error(
+            "--total-credits needs the persisted ledger; it cannot be used with --no-ledger"
+        )
+
     tickers = list(dict.fromkeys(args.tickers))
     tool_names = tools.TOOL_NAMES if args.tool == "all" else (args.tool,)
     planned = [(ticker, tool) for ticker in tickers for tool in tool_names]
@@ -213,28 +222,44 @@ def main(argv: Sequence[str] | None = None, *, client_factory: ClientFactory | N
 
     factory = client_factory if client_factory is not None else _load_client_factory()
     results: list[Result] = []
+    failed_calls = 0
+    stopping: errors.AdapterError | None = None
     try:
-        # Per-run phase id: --max-credits and the call cap are per run, while the
-        # persisted ledger still enforces --total-credits across all runs.
-        run_phase = f"{PHASE}-{datetime.now(UTC):%Y%m%dT%H%M%S}-{os.getpid()}"
-        client = factory(
-            phase=run_phase,
-            ledger_path=ledger_path,
-            max_credits=args.max_credits,
-            # Every attempt, retries included, passes through the ledger's call cap.
-            call_cap=len(planned) * MAX_ATTEMPTS,
-            total_budget=args.total_credits,
-            min_balance=args.min_balance,
-        )
         try:
-            for ticker, tool in planned:
-                results.append(client.run(tool, ticker))
-        finally:
-            client.close()
-    except errors.AdapterError as exc:
+            # Per-run phase id: --max-credits and the call cap are per run, while the
+            # persisted ledger still enforces --total-credits across all runs.
+            run_phase = f"{PHASE}-{datetime.now(UTC):%Y%m%dT%H%M%S}-{os.getpid()}"
+            client = factory(
+                phase=run_phase,
+                ledger_path=ledger_path,
+                max_credits=args.max_credits,
+                # Every attempt, retries included, passes through the ledger's call cap.
+                call_cap=len(planned) * MAX_ATTEMPTS,
+                total_budget=args.total_credits,
+                min_balance=args.min_balance,
+            )
+            try:
+                for ticker, tool in planned:
+                    try:
+                        results.append(client.run(tool, ticker))
+                    except _PER_CALL_ERRORS as exc:
+                        # Only this call failed; later calls may still succeed.
+                        failed_calls += 1
+                        print(
+                            f"error: {type(exc).__name__}: {exc} ({ticker} {tool})",
+                            file=sys.stderr,
+                        )
+            finally:
+                client.close()
+        except errors.AdapterError as exc:
+            # Auth, unsafe configuration and credit errors affect every later call.
+            stopping = exc
+            print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
+    finally:
+        # Completed results are always emitted, also when an unexpected exception
+        # is propagating (it is not swallowed).
         _emit(results, as_json=args.json)
-        print(f"error: {type(exc).__name__}: {exc}", file=sys.stderr)
-        return _exit_code_for(exc)
 
-    _emit(results, as_json=args.json)
-    return EXIT_OK
+    if stopping is not None:
+        return _exit_code_for(stopping)
+    return EXIT_UPSTREAM if failed_calls else EXIT_OK
