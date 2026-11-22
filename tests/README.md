@@ -1,8 +1,7 @@
 # Offline test infrastructure
 
 Python 3.12+, pytest, ruff and pre-commit are configured in `pyproject.toml`.
-Install from a trusted local wheelhouse using the commands in the root README.
-All setup and checks for this scaffold were performed without network access.
+Install from the commands in the root README. The test suite runs offline.
 
 ## Rerun verification
 
@@ -27,56 +26,49 @@ The error module rejects real `time.sleep` calls. Retry sleep must be mocked.
 These are test safeguards; they do not isolate arbitrary native code or child
 processes. The gitleaks child process performs only static local scans.
 
-## Error contracts: blocked on Faisal
+## Error contracts
 
-`test_errors.py` contains the six requested error scenarios plus upstream
-authentication rejection, four 5xx statuses, unexpected-error propagation,
-backoff ordering and exception-chain credential redaction. Rate limits and
-repeated 5xx failures require exactly three attempts and two backoff calls.
-Credit exhaustion and authentication rejection require one attempt, no backoff;
-a missing key requires zero requests and no backoff.
+`test_errors.py` runs against the real `ResearchClient`, bound in the
+`sdk_contract` fixture in `conftest.py`. The binding constructs the real client
+and raises real `hpsilab_mcp` exceptions beneath the production retry loop. The
+request mock and the sleep mock are injected at those seams.
 
-All SDK-dependent cases currently skip with an explicit BLOCKED reason. There
-is no fake production client or test implementation of retries or normalization.
+The file covers the six requested error scenarios plus upstream authentication
+rejection, four 5xx statuses, unexpected-error propagation, backoff ordering and
+exception-chain credential redaction. Rate limits and repeated 5xx failures
+require exactly three attempts and two backoff calls. Credit exhaustion and
+authentication rejection require one attempt, no backoff. A missing key requires
+zero requests and no backoff.
 
-Before enabling them, agree the TEST-ONLY `SDKContract` handoff in
-`tests/sdk_contract.py`. It is not an approved public SDK API. Replace only the
-blocked fixture in `tests/conftest.py` with callbacks that bind the REAL client:
+Timeouts make 1 attempt. This is the owner's decision: a timed-out request may
+already have been billed, so it is not repeated. The binding sets
+`timeout_attempts=1` to match `policy.TIMEOUT_ATTEMPTS`.
 
-1. Identify the existing public client and approved research invocation.
-2. Map the actual exception classes: `RateLimited`, `CreditsExhausted`,
-   `Timeout`, `UpstreamError`, `AuthError`.
-3. Inject the request mock beneath the production retry loop and inject the
-   actual backoff/sleep seam. Disable caches. Never wrap the mock in new retry
-   or error translation code just to satisfy these tests.
-4. Create actual SDK failure instances for rate limit, credits, timeout,
-   authentication, and HTTP 500/502/503/504, using fabricated messages/metadata.
-5. Provide a success response and expected normalized result from documented
-   response shapes, with every value fabricated.
-6. Agree whether timeouts are immediate or retryable. The requirements specify
-   `Timeout` and a three-attempt upper bound but do not specify an exact timeout
-   retry policy. Set the agreed expected attempt count (1, 2 or 3) in the binding.
-7. Ensure `api_key=None` explicitly exercises missing authentication without
-   reading external credentials. Construct the real client inside the callable
-   returned by the test binding so constructor errors can be asserted.
-
-No production client constructor, import path, SDK error shape, environmental
-key name, response schema, or final command set has been invented.
+The `sdk_contract` binding must stay thin. Its callbacks may adapt the existing
+client and SDK. They must not add retry logic, error translation or a fake
+client to make a test pass. `tests/sdk_contract.py` documents the seam itself.
+It is a test-only specification, not a public SDK API.
 
 ## Fixtures: six empty responses ready, twelve shapes pending
 
-`fixtures/_manifest.json` tracks all 18 planned paths and marks the twelve
-absent full/missing-field files as `schema_pending`. It is inventory metadata,
-not an HPSILab response. The six existing response fixtures contain exactly
-`{}`. Each response-shape compatibility case is explicitly skipped.
+`fixtures/` holds six synthetic response files, one per research method. Each
+contains exactly `{}`. `fixtures/_manifest.json` lists all 18 planned paths
+(empty, full and missing-field variants for each method) and marks the twelve
+full and missing-field files as `schema_pending`. It is inventory metadata, not
+an HPSILab response.
 
-When Faisal provides structures, create full responses preserving that structure
-and replacing EVERY value with fabricated content. Derive each missing-field
-response from its full counterpart by deleting exactly one documented field.
-Record the omitted field and schema version, add actual shape validation, and
-update the manifest and pending tests together. Do not paste real responses,
-market values, credentials, account identifiers or personal data into this repo.
-No full-response compatibility is currently verified.
+`schemas/` holds one `*.shape.json` file per method. These record keys and types
+only, never values, and were built from probed response shapes. They are not
+used as full-response fixtures.
+
+Each full-response compatibility case is explicitly skipped until the documented
+response structure for that method is available. When it is, create the full
+response with the same structure and replace EVERY value with fabricated content.
+Derive each missing-field response from its full counterpart by deleting exactly
+one documented field. Record the omitted field and the schema version, add shape
+validation, and update the manifest and the pending tests together. Do not paste
+real responses, market values, credentials, account identifiers or personal data
+into this repo. No full-response compatibility is currently verified.
 
 `pretrade_risk_scan` is a research method name; it grants no trading authority.
 
@@ -119,7 +111,8 @@ never committed. Raw scanner output and secret values are always suppressed.
 the actual Git staged index; this catches staged values even if working files
 were subsequently changed. Exit codes: 0 clean, 1 findings, 2 blocked/tool error.
 `--self-test` returns 0 only when the synthetic canary is detected; a missing
-scanner is a blocked result, never a pass.
+scanner is a blocked result, never a pass. The self-test prints one line for the
+canary finding it expects; that line is not a failure.
 
 After the tool is available, activate the project environment in this shell
 and run/install the local hooks:
