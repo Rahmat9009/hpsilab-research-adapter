@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -249,7 +250,7 @@ class ResearchClient:
             )
         if phase is None:
             # Unique per client so per-run caps never accumulate across runs.
-            phase = f"lib-{datetime.now(UTC):%Y%m%dT%H%M%S}-{os.getpid()}-{id(object())}"
+            phase = f"lib-{datetime.now(UTC):%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:12]}"
         ledger = CreditLedger(ledger_path)
         recording = RecordingTransport(
             ledger,

@@ -203,7 +203,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 282 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
+The expected result is 284 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 

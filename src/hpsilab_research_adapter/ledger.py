@@ -125,8 +125,8 @@ class CreditLedger:
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
                 self.entries = [Entry(**e) for e in raw.get("entries", [])]
-                self.blind = bool(raw.get("blind", False))
-                self.meta_free_verified = bool(raw.get("meta_free_verified", False))
+                self.blind = raw.get("blind", False) is True
+                self.meta_free_verified = raw.get("meta_free_verified", False) is True
                 for e in self.entries:
                     _validate_entry(e)
             except (OSError, ValueError, TypeError, AttributeError):

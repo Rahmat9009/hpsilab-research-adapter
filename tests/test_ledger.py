@@ -589,3 +589,20 @@ def test_from_env_default_phase_is_unique(monkeypatch: pytest.MonkeyPatch):
     finally:
         a.close()
         b.close()
+
+
+def test_from_env_default_phase_unique_in_tight_loop(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HPSILAB_API_KEY", KEY)
+    clients = [ResearchClient.from_env(ledger_path=None) for _ in range(50)]
+    try:
+        assert len({c._transport.phase for c in clients}) == 50
+    finally:
+        for c in clients:
+            c.close()
+
+
+def test_string_flags_in_ledger_file_are_not_truthy(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({"blind": "false", "meta_free_verified": "false", "entries": []}))
+    ledger = CreditLedger(path)
+    assert ledger.meta_free_verified is False
