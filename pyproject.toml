@@ -24,7 +24,7 @@ dev = [
 ]
 
 [project.scripts]
-hpsilab = "hpsilab_research_adapter.cli:main"
+hpsilab-research = "hpsilab_research_adapter.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -84,7 +84,7 @@ def cli_smoke(remaining: int) -> None:
     except ValueError:
         shape_ok, n = False, 0
     print(
-        f"CLI smoke `hpsilab SPY --tool iv_radar --json`: exit={rc} results={n} "
+        f"CLI smoke `hpsilab-research SPY --tool iv_radar --json`: exit={rc} results={n} "
         f"json_ok={shape_ok} stderr={err.getvalue().strip()[:200]!r}"
     )
 

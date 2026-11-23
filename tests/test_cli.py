@@ -86,7 +86,7 @@ def test_help_states_research_and_read_only_boundary(
 
 def test_no_arguments_prints_help_and_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
     assert main([], client_factory=forbidden_factory) == 0
-    assert "usage: hpsilab" in capsys.readouterr().out
+    assert "usage: hpsilab-research" in capsys.readouterr().out
 
 
 def test_version_prints_package_version(capsys: pytest.CaptureFixture[str]) -> None:

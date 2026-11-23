@@ -61,15 +61,15 @@ Do not write the key into a file in this repository, and do not commit it. If th
 
 ## Usage
 
-Real output of `hpsilab --help`:
+Real output of `hpsilab-research --help`:
 
 ```
-usage: hpsilab [-h]
-               [--tool {all,analyze_stock,ai_prediction,iv_radar,option_pressure,pretrade_risk_scan,monte_carlo}]
-               [--json] [--max-credits N] [--min-balance N]
-               [--total-credits N] [--ledger PATH | --no-ledger] [--status]
-               [--version]
-               [TICKER ...]
+usage: hpsilab-research [-h]
+                        [--tool {all,analyze_stock,ai_prediction,iv_radar,option_pressure,pretrade_risk_scan,monte_carlo}]
+                        [--json] [--max-credits N] [--min-balance N]
+                        [--total-credits N] [--ledger PATH | --no-ledger]
+                        [--status] [--version]
+                        [TICKER ...]
 
 HPSILab research-only CLI. Research and analysis only. The tool is read-only:
 it never generates, approves, submits or executes orders.
@@ -103,8 +103,8 @@ against the credit budget (see --max-credits, --min-balance, --total-credits).
 Examples. Both make live requests and spend Credits, so set a key first:
 
 ```powershell
-hpsilab NVDA --tool analyze_stock
-hpsilab AAPL SPY --tool all --json
+hpsilab-research NVDA --tool analyze_stock
+hpsilab-research AAPL SPY --tool all --json
 ```
 
 Tickers are case-insensitive and are converted to upper case. A ticker starts with a letter and may contain letters, digits, `.` and `-`, up to 10 characters in total. `--tool all` is the default. Each ticker and tool pair is one planned request, so `AAPL SPY --tool all` plans 12 requests.
@@ -255,4 +255,4 @@ HPSILab and the HPSILab name belong to their owner. This project is an independe
 
 ## License
 
-The adapter's own code is released under the MIT License. See [LICENSE](LICENSE). The license does not cover HPSILab's API, data, services or branding.
+The adapter's own code is released under the MIT License. See [LICENSE](LICENSE). The license does not cover HPSILab's API, data, services or branding, and it does not imply any endorsement by HPSILab.
