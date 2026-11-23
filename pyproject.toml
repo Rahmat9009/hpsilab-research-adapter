@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hpsilab-research-adapter"
 version = "0.1.0"
-description = "Read-only research adapter for six HPSILab tools (independent integration, not an official HPSILab product)"
+description = "Read-only research adapter for six HPSILab tools (independent, unverified third-party integration; not an official HPSILab product)"
 license = "MIT"
 license-files = ["LICENSE"]
 readme = "README.md"

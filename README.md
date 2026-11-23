@@ -4,7 +4,7 @@ A read-only Python command-line tool and library that wraps six HPSILab research
 
 > **Notice**
 >
-> This is an independent integration. It is not an official HPSILab product, and HPSILab has not endorsed it.
+> This is an independent, unverified third-party integration. It is not an official HPSILab product. HPSILab has not verified or endorsed it, and it has no HPSILab Community listing approval.
 >
 > The adapter is for research and analysis only. It is read-only. It never generates, approves, submits or executes real-money orders, directly or through another service. HPSILab outputs must never generate, approve, authorize, route or execute trades, directly or indirectly.
 >
@@ -73,7 +73,7 @@ usage: hpsilab-research [-h]
 
 HPSILab research-only CLI. Research and analysis only. The tool is read-only:
 it never generates, approves, submits or executes orders.
-Independent integration, not an official or endorsed HPSILab product.
+Independent, unverified third-party integration, not an official or endorsed HPSILab product.
 
 positional arguments:
   TICKER                ticker symbol(s), for example NVDA MSFT
@@ -251,7 +251,7 @@ The hooks are local system hooks. They do not download environments. They run th
 - Rahmat Ullah: offline test infrastructure, error-contract and fixture specifications, read-only AST boundary checks, secret scanning and pre-commit setup.
 - Mohammed Faisal Parvez: SDK integration, client, normalization, CLI.
 
-HPSILab and the HPSILab name belong to their owner. This project is an independent integration.
+HPSILab and the HPSILab name belong to their owner. This project is an independent, unverified third-party integration.
 
 ## License
 

@@ -58,7 +58,7 @@ _PER_CALL_ERRORS = (errors.RateLimited, errors.Timeout, errors.UpstreamError)
 DESCRIPTION = (
     "HPSILab research-only CLI. Research and analysis only. The tool is read-only:\n"
     "it never generates, approves, submits or executes orders.\n"
-    "Independent integration, not an official or endorsed HPSILab product."
+    "Independent, unverified third-party integration, not an official or endorsed HPSILab product."
 )
 EPILOG = (
     "Live runs need HPSILAB_API_KEY in the environment. Use --status to check\n"

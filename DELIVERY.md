@@ -5,7 +5,7 @@ Authors: Mohammed Faisal Parvez (SDK integration, client, credit ledger, normali
 and Rahmat Ullah (offline test infrastructure, error-contract and fixture specifications,
 read-only AST boundary checks, secret scanning, pre-commit setup).
 
-This is an independent integration, not an official HPSILab product. HPSILab has not endorsed it.
+This is an independent, unverified third-party integration, not an official HPSILab product. HPSILab has not verified or endorsed it, and there is no HPSILab Community listing approval.
 It is read-only and for research and analysis only. See `TERMS.md`.
 
 ## What works
@@ -19,7 +19,7 @@ It is read-only and for research and analysis only. See `TERMS.md`.
 - **Retries.** 429, 5xx and connection errors get up to 3 attempts. Timeouts get 1 attempt, because a timed-out call may already have been billed. Credit and auth errors are never retried. Every attempt is checked and recorded by the credit ledger.
 - **Normalization.** Every tool returns a common `Result`: `tool`, `ticker`, `data`, `horizon`, `source_fields`, `missing_fields`. Values pass through unchanged. `horizon` is reported only when the response states one (`monte_carlo.horizon_days`). It is never inferred.
 - **Price parser.** It reads the live catalog shape: `canonical_tool_name` and `aliases` map to `credits` for active entries only, with a fallback that matches the request path against `rest_path_patterns`.
-- **Docs.** README with the independent-integration and no-responsibility wording from `TERMS.md`, the link to https://hpsilab.com, MIT `LICENSE` scoped to the adapter code only, and `TERMS.md`.
+- **Docs.** README with the independent-integration and no-responsibility wording from `TERMS.md`, the link to https://hpsilab.com, the standard MIT `LICENSE`, and `TERMS.md`. The note that the licence covers only the adapter code is in the README and `TERMS.md`.
 
 ## Evidence
 
