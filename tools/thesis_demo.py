@@ -75,14 +75,18 @@ def main(argv: list[str]) -> int:
 
     results: dict[str, Result | Exception | None] = {}
     phase = f"thesis-demo-{datetime.now(UTC):%Y%m%dT%H%M%S}"
-    client = ResearchClient.from_env(
-        phase=phase,
-        ledger_path=LEDGER,
-        max_credits=MAX_CREDITS,
-        call_cap=len(tools.TOOL_NAMES) * MAX_ATTEMPTS,
-        total_budget=TOTAL_BUDGET,
-        min_balance=MIN_BALANCE,
-    )
+    try:
+        client = ResearchClient.from_env(
+            phase=phase,
+            ledger_path=LEDGER,
+            max_credits=MAX_CREDITS,
+            call_cap=len(tools.TOOL_NAMES) * MAX_ATTEMPTS,
+            total_budget=TOTAL_BUDGET,
+            min_balance=MIN_BALANCE,
+        )
+    except errors.AdapterError as exc:
+        print(f"REFUSED: {type(exc).__name__} before any request was sent.", flush=True)
+        return 3
     try:
         for tool in tools.TOOL_NAMES:
             try:

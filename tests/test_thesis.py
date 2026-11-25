@@ -281,6 +281,24 @@ def test_horizon_match_different_unstated() -> None:
     assert all(e.horizon_status == "unstated" for e in others)
 
 
+@pytest.mark.parametrize(
+    ("horizon", "status"),
+    [
+        (10, "match"),
+        (10.0, "match"),
+        (10.9, "different"),
+        ("inf", "different"),
+        ("nan", "different"),
+        ("1e400", "different"),
+        ("ten", "different"),
+    ],
+)
+def test_horizon_must_be_an_exact_whole_day_and_never_crashes(horizon: Any, status: str) -> None:
+    report = run("up", **{tools.MONTE_CARLO: monte(horizon=horizon)})
+    mc = [e for e in report.evidence if e.tool == tools.MONTE_CARLO]
+    assert mc and all(e.horizon_status == status for e in mc)
+
+
 def test_monte_carlo_unparseable_values_go_to_missing() -> None:
     bad = res(
         tools.MONTE_CARLO, {"start_price": "x", "median_price": 1.0, "horizon_days": 10}, "10"

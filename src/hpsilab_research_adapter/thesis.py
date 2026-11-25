@@ -254,10 +254,14 @@ def _horizon_status(thesis: Thesis, source: str | None) -> str:
     if source is None:
         return "unstated"
     try:
-        stated = int(float(source))
-    except (TypeError, ValueError):
+        value = float(source)
+    except (TypeError, ValueError, OverflowError):
         return "different"
-    return "match" if stated == thesis.horizon_days else "different"
+    # Only an exact whole-day horizon equal to the thesis horizon counts as a match;
+    # 10.9 is not 10, and inf/nan never match.
+    if not value.is_integer():
+        return "different"
+    return "match" if int(value) == thesis.horizon_days else "different"
 
 
 # -- per-tool rules -------------------------------------------------------
