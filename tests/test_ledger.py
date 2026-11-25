@@ -757,6 +757,25 @@ def test_lock_failure_sends_no_request_and_leaves_the_file_alone(tmp_path: Path)
     assert not path.exists()
 
 
+def test_permission_denied_without_a_lock_file_refuses_within_the_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    path = tmp_path / "ledger.json"
+    ledger = CreditLedger(path, lock_timeout=0.3)
+    real_open = os.open
+
+    def deny(p, *args, **kwargs):
+        if str(p).endswith(".lock"):
+            raise PermissionError(13, "denied")
+        return real_open(p, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", deny)
+    start = time.monotonic()
+    with pytest.raises(CreditBudgetExceeded, match="lock"):
+        ledger.authorize("p", budget=100, call_cap=10)
+    assert time.monotonic() - start < 3
+
+
 def test_stale_lock_is_removed_and_the_lock_is_released_after_use(tmp_path: Path):
     path = tmp_path / "ledger.json"
     lock_file = path.with_name("ledger.json.lock")

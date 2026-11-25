@@ -175,14 +175,18 @@ class _FileLock:
         while True:
             try:
                 fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            except (FileExistsError, PermissionError):
+            except (FileExistsError, PermissionError) as exc:
                 # Windows reports a lock file that is being deleted as PermissionError.
+                # The deadline is checked on every path so no branch can spin forever.
+                if time.monotonic() >= deadline:
+                    raise self._refuse(f"could not be taken within {self.timeout}s") from None
+                if isinstance(exc, PermissionError) and not self.path.exists():
+                    # Denied although no lock file exists (unwritable directory or
+                    # delete-pending file): wait, do not spin, and honour the deadline.
+                    time.sleep(_LOCK_POLL_SECONDS)
+                    continue
                 if self._break_if_stale():
                     continue
-                if time.monotonic() >= deadline:
-                    raise self._refuse(
-                        f"is held by another process (waited {self.timeout}s)"
-                    ) from None
                 time.sleep(_LOCK_POLL_SECONDS)
                 continue
             except OSError:
