@@ -10,6 +10,11 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
+import subprocess
+import sys
+import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import Mock
@@ -17,6 +22,9 @@ from unittest.mock import Mock
 import httpx
 import pytest
 
+import hpsilab_research_adapter
+from hpsilab_research_adapter.cli import EXIT_CREDITS
+from hpsilab_research_adapter.cli import main as cli_main
 from hpsilab_research_adapter.client import DEFAULT_CALL_CAP, DEFAULT_MAX_CREDITS, ResearchClient
 from hpsilab_research_adapter.errors import (
     AdapterError,
@@ -675,3 +683,188 @@ def test_inactive_catalog_price_never_used():
     with pytest.raises(CreditBudgetExceeded):  # unknown price reserves 20
         client.run("analyze_stock", "TEST")
     assert fake.tool_hits == []
+
+
+# ------------------------------------------------- known-gap fixes (lock, damage, zero cost)
+def _record_many(ledger: CreditLedger, phase: str, count: int) -> None:
+    for _ in range(count):
+        ledger.record(phase, tool="t", ticker=None, status=200, balance_after=None, charged=1)
+
+
+def test_two_ledger_instances_on_one_path_in_threads_lose_no_entries(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    first, second = CreditLedger(path), CreditLedger(path)
+    workers = [
+        threading.Thread(target=_record_many, args=(first, "a", 25)),
+        threading.Thread(target=_record_many, args=(second, "b", 25)),
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join()
+    stored = json.loads(path.read_text(encoding="utf-8"))["entries"]
+    assert len(stored) == 50
+    assert CreditLedger(path).spent() == 50
+    assert not path.with_name("ledger.json.lock").exists()
+
+
+def test_two_processes_on_one_path_lose_no_entries(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    src = Path(hpsilab_research_adapter.__file__).resolve().parent.parent
+    code = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from hpsilab_research_adapter.ledger import CreditLedger\n"
+        "ledger = CreditLedger(Path(sys.argv[1]))\n"
+        "for _ in range(30):\n"
+        "    ledger.record(sys.argv[2], tool='t', ticker=None, status=200,\n"
+        "                  balance_after=None, charged=1)\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(src)}
+    procs = [
+        subprocess.Popen([sys.executable, "-c", code, str(path), name], env=env)
+        for name in ("a", "b")
+    ]
+    assert [proc.wait(timeout=120) for proc in procs] == [0, 0]
+    ledger = CreditLedger(path)
+    assert ledger.unreadable is False
+    assert len(ledger.entries) == 60
+    assert ledger.spent("a") == 30 and ledger.spent("b") == 30
+
+
+def test_authorize_refuses_while_another_holder_has_the_lock(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    holder = CreditLedger(path)
+    waiter = CreditLedger(path, lock_timeout=0.2)
+    with holder._locked(), pytest.raises(CreditBudgetExceeded, match="lock"):
+        waiter.authorize("p", budget=100, call_cap=10)
+    waiter.authorize("p", budget=100, call_cap=10)  # free again
+
+
+def test_lock_failure_sends_no_request_and_leaves_the_file_alone(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    ledger = CreditLedger(path, lock_timeout=0.2)
+    lock_file = path.with_name("ledger.json.lock")
+    lock_file.write_text("other-process", encoding="ascii")  # fresh, so not stale
+    fake = Fake()
+    client, _, _ = make(fake, ledger=ledger)
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("analyze_stock", "TEST")
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("analyze_stock", "TEST")
+    assert fake.tool_hits == []
+    assert lock_file.read_text(encoding="ascii") == "other-process"
+    assert not path.exists()
+
+
+def test_stale_lock_is_removed_and_the_lock_is_released_after_use(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    lock_file = path.with_name("ledger.json.lock")
+    lock_file.write_text("dead-process", encoding="ascii")
+    old = time.time() - 3600
+    os.utime(lock_file, (old, old))
+    ledger = CreditLedger(path, lock_timeout=0.5, lock_stale_after=30)
+    ledger.authorize("p", budget=100, call_cap=10)
+    ledger.record("p", tool="t", ticker=None, status=200, balance_after=None, charged=2)
+    assert not lock_file.exists()
+    assert CreditLedger(path).spent("p") == 2
+
+
+@pytest.mark.parametrize("cost", ['"abc"', "-5", "true", "1.5"])
+def test_damaged_ledger_refuses_every_call_and_never_sends(tmp_path: Path, cost: str):
+    path = tmp_path / "ledger.json"
+    entry = (
+        '{"at": "x", "phase": "old", "tool": "t", "ticker": null, "status": 200, '
+        f'"balance_before": null, "balance_after": null, "cost": {cost}}}'
+    )
+    path.write_text('{"entries": [' + entry + "]}", encoding="utf-8")
+    fake = Fake()
+    client, ledger, _ = make(fake, ledger=CreditLedger(path))
+    assert ledger.unreadable is True
+    for _ in range(3):  # the second call used to raise TypeError
+        with pytest.raises(CreditBudgetExceeded):
+            client.run("analyze_stock", "TEST")
+    assert fake.tool_hits == []
+    assert fake.credit_hits == []
+    assert ledger.entries == []
+
+
+def test_ledger_damaged_after_start_refuses_the_next_call(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    fake = Fake(tool=lambda f, r: resp(charged="1", remaining="999"))
+    client, _, _ = make(fake, ledger=CreditLedger(path))
+    client.run("analyze_stock", "TEST")
+    sent = len(fake.tool_hits)
+    path.write_text("{broken", encoding="utf-8")
+    for _ in range(2):
+        with pytest.raises(CreditBudgetExceeded):
+            client.run("analyze_stock", "TEST")
+    assert len(fake.tool_hits) == sent
+    assert path.read_text(encoding="utf-8") == "{broken"
+
+
+def _zero_cost_history(path: Path) -> None:
+    free = Fake(tool=lambda f, r: resp(charged="0", remaining="1000"))
+    client, ledger, _ = make(free, ledger=CreditLedger(path), phase="run1", budget=100)
+    client.run("analyze_stock", "TEST")
+    assert ledger.tool_cost("analyze_stock") == 0
+
+
+def test_learned_zero_cost_does_not_lower_the_reserve_without_a_catalog_price(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    _zero_cost_history(path)
+    assert CreditLedger(path).reserve_for("analyze_stock", None) == UNKNOWN_PRICE_RESERVE
+    second = Fake(tool=lambda f, r: resp(charged="0", remaining="1000"))
+    client, _, _ = make(
+        second, ledger=CreditLedger(path), phase="run2", budget=UNKNOWN_PRICE_RESERVE - 1
+    )
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("analyze_stock", "TEST")
+    assert second.tool_hits == []
+
+
+def test_learned_zero_cost_with_max_credits_zero_refuses(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    _zero_cost_history(path)
+    second = Fake(tool=lambda f, r: resp(charged="0", remaining="1000"))
+    client, _, _ = make(second, ledger=CreditLedger(path), phase="run2", budget=0)
+    with pytest.raises(CreditBudgetExceeded):
+        client.run("analyze_stock", "TEST")
+    assert second.tool_hits == []
+
+
+def test_cli_max_credits_zero_refuses_a_tool_with_learned_zero_cost(tmp_path: Path, capsys):
+    path = tmp_path / "ledger.json"
+    _zero_cost_history(path)
+    fake = Fake(tool=lambda f, r: resp(charged="0", remaining="1000"))
+
+    def factory(**kwargs):
+        client, _, _ = make(
+            fake,
+            ledger=CreditLedger(kwargs["ledger_path"]),
+            phase=kwargs["phase"],
+            budget=kwargs["max_credits"],
+            call_cap=kwargs["call_cap"],
+        )
+        return client
+
+    rc = cli_main(
+        ["TEST", "--tool", "analyze_stock", "--max-credits", "0", "--ledger", str(path)],
+        client_factory=factory,
+    )
+    assert rc == EXIT_CREDITS
+    assert fake.tool_hits == []
+    assert "CreditBudgetExceeded" in capsys.readouterr().err
+
+
+def test_catalog_price_still_wins_over_a_learned_zero(tmp_path: Path):
+    path = tmp_path / "ledger.json"
+    _zero_cost_history(path)
+    priced = Fake(
+        catalog={"tools": [{"tool": "analyze_stock", "credits": 3}]},
+        tool=lambda f, r: resp(charged="3", remaining="997"),
+    )
+    client, ledger, _ = make(priced, ledger=CreditLedger(path), phase="run2", budget=3)
+    client.run("analyze_stock", "TEST")
+    assert len(priced.tool_hits) == 1
+    assert ledger.spent("run2") == 3
