@@ -136,13 +136,13 @@ These limits are checked before each request using the reserved price described 
 | 4 | Credit problem. | `CreditsExhausted` (the account cannot pay for the call), `CreditBudgetExceeded` (a local cap, the total budget or the balance floor would be crossed; refused before sending) |
 | 5 | At least one call failed with an upstream problem after the retry policy; other calls still ran. | `RateLimited`, `Timeout`, `UpstreamError` (including a response that does not match the expected shape) |
 
-### Thesis evidence (research only)
+### Thesis evidence (research demo)
 
 ```
 python -m hpsilab_research_adapter.thesis NVDA --direction up --horizon 10 [--json]
 ```
 
-You state the ticker, the direction (`up`, `down` or `range`) and the horizon in days. The module runs the six tools once (same credit flags and exit codes as the CLI, one pass is about 38 credits) and applies a few fixed, documented rules that label each observed value as `supports`, `challenges`, `neutral` or `context` for your thesis. It never picks a thesis and gives no verdict. Every rule's text is printed with its evidence. Only `monte_carlo` states a horizon; evidence for a different horizon is shown but tallied separately. Failed tools, absent fields and unexpected types are listed under "Missing", never guessed. The two suggested price-level fields of `ai_prediction` are deliberately never used. Output carries a fixed disclaimer: research only, not a recommendation, not verified by HPSILab. The Python API is `thesis.evaluate`, `thesis.render_markdown` and `thesis.to_dict`.
+You state the ticker, the direction (`up`, `down` or `range`) and the horizon in days. The module runs the six tools once (same credit flags and exit codes as the CLI, one pass is about 38 credits) and applies a few fixed, documented rules that label each observed value as `supports`, `challenges`, `neutral` or `context` for your thesis. It never picks a thesis and gives no verdict. Every rule's text is printed with its evidence. Only `monte_carlo` states a horizon; evidence for a different horizon is shown but tallied separately. Failed tools, absent fields and unexpected types are listed under "Missing", never guessed. The two suggested price-level fields of `ai_prediction` are deliberately never used. Output carries a fixed disclaimer: research only, not a recommendation, not verified by HPSILab. The Python API is `thesis.evaluate`, `thesis.render_markdown` and `thesis.to_dict`. Full description, every rule verbatim and a synthetic example report: [docs/THESIS.md](docs/THESIS.md). The hand-run live demo is `tools/thesis_demo.py` (not run in CI).
 
 ### Library example
 
@@ -211,7 +211,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 289 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
+The expected result is 343 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 
