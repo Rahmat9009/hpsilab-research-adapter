@@ -24,11 +24,22 @@ Guarantees (each is covered by tests/test_ledger.py):
 * A tool request whose cost cannot be established marks the ledger blind, and a
   blind ledger refuses tool requests until a later balance read succeeds
   (``RecordingTransport.start`` does that read at the beginning of every run).
-* An unreadable ledger file refuses every request rather than starting from 0.
+* An unreadable ledger file refuses every request rather than starting from 0,
+  on every call, and never sends one.
+* Every load, authorize, record and save of a persisted ledger runs under a
+  cross-process lock file (``<ledger>.lock``, created with O_CREAT|O_EXCL, stdlib
+  only) and re-reads the file first, so two processes never overwrite each
+  other's entries. If the lock cannot be taken within the timeout the request is
+  refused (``CreditBudgetExceeded``). A lock older than ``lock_stale_after``
+  seconds is treated as left by a dead process and removed.
+* A learned cost of 0 does not lower a tool's reserve below
+  ``UNKNOWN_PRICE_RESERVE`` when the catalog has no price for it.
 
 Known limits:
-* The ledger file is not locked; two concurrent runs sharing one file can each
-  see the other's spend late. Use separate ledgers or run sequentially.
+* The lock is held only while the ledger is read or written, not while a request
+  is in flight. Two processes can both pass ``authorize`` before either records,
+  so each can overshoot a shared budget by one in-flight call per process.
+  Removing a stale lock is not atomic against another process doing the same.
 * A request that times out but is billed by HPSILab after the timeout is
   attributed only through the balance: if the next response carries
   ``X-Credits-Charged`` the late charge is not attributed to any entry, so the
@@ -49,7 +60,10 @@ import math
 import os
 import re
 import threading
-from collections.abc import Mapping
+import time
+import uuid
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -68,6 +82,9 @@ CATALOG_PATH = "/api/credits/catalog"
 # observed on 2026-11-22 (max 15 credits, pretrade_risk_scan).
 UNKNOWN_PRICE_RESERVE = 20
 TRANSPORT_FAILURE = 0  # status recorded when no HTTP response arrived
+LOCK_TIMEOUT_SECONDS = 10.0  # how long to wait for another process's ledger lock
+LOCK_STALE_SECONDS = 30.0  # a lock file older than this is from a dead process
+_LOCK_POLL_SECONDS = 0.01
 
 _BALANCE_KEYS = ("credits_remaining", "remaining", "balance", "credits", "available")
 _PRICE_KEYS = ("credits", "price", "cost", "credits_per_call", "price_credits", "credit_cost")
@@ -114,24 +131,143 @@ def _validate_entry(e: Entry) -> None:
         raise ValueError("invalid ledger entry")
 
 
+class _FileLock:
+    """Exclusive cross-process lock: a lock file created with O_CREAT|O_EXCL.
+
+    ``acquire`` raises ``CreditBudgetExceeded`` (fail closed) if the lock cannot
+    be taken within ``timeout`` seconds. A lock file whose mtime is older than
+    ``stale_after`` seconds is treated as abandoned and removed."""
+
+    def __init__(self, path: Path, timeout: float, stale_after: float) -> None:
+        self.path = path
+        self.timeout = timeout
+        self.stale_after = stale_after
+        self._token = ""
+
+    @staticmethod
+    def _refuse(reason: str) -> CreditBudgetExceeded:
+        return CreditBudgetExceeded(f"Refusing request: ledger lock {reason}.")
+
+    def _break_if_stale(self) -> bool:
+        try:
+            age = time.time() - self.path.stat().st_mtime
+        except FileNotFoundError:
+            return True  # released meanwhile; retry at once
+        except OSError:
+            return False
+        if age <= self.stale_after:
+            return False
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError:
+            return False
+        return True
+
+    def acquire(self) -> None:
+        deadline = time.monotonic() + self.timeout
+        token = f"{os.getpid()}:{uuid.uuid4().hex}"
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            raise self._refuse("directory is not writable") from None
+        while True:
+            try:
+                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except (FileExistsError, PermissionError) as exc:
+                # Windows reports a lock file that is being deleted as PermissionError.
+                # The deadline is checked on every path so no branch can spin forever.
+                if time.monotonic() >= deadline:
+                    raise self._refuse(f"could not be taken within {self.timeout}s") from None
+                if isinstance(exc, PermissionError) and not self.path.exists():
+                    # Denied although no lock file exists (unwritable directory or
+                    # delete-pending file): wait, do not spin, and honour the deadline.
+                    time.sleep(_LOCK_POLL_SECONDS)
+                    continue
+                if self._break_if_stale():
+                    continue
+                time.sleep(_LOCK_POLL_SECONDS)
+                continue
+            except OSError:
+                raise self._refuse("could not be created") from None
+            try:
+                os.write(fd, token.encode("ascii"))
+            finally:
+                os.close(fd)
+            self._token = token
+            return
+
+    def release(self) -> None:
+        try:
+            if self.path.read_text(encoding="ascii") != self._token:
+                return  # taken over as stale by another process; not ours to delete
+            self.path.unlink()
+        except (OSError, UnicodeError):
+            pass
+
+
 class CreditLedger:
-    def __init__(self, path: Path | None = DEFAULT_LEDGER_PATH) -> None:
+    def __init__(
+        self,
+        path: Path | None = DEFAULT_LEDGER_PATH,
+        *,
+        lock_timeout: float = LOCK_TIMEOUT_SECONDS,
+        lock_stale_after: float = LOCK_STALE_SECONDS,
+    ) -> None:
         self.path = path
         self._lock = threading.RLock()
+        self._file_lock = (
+            None
+            if path is None
+            else _FileLock(path.with_name(path.name + ".lock"), lock_timeout, lock_stale_after)
+        )
+        self._depth = 0
         self.entries: list[Entry] = []
         self.blind = False
         self.meta_free_verified = False
         self.unreadable = False
         if path is not None and path.exists():
             try:
-                raw = json.loads(path.read_text(encoding="utf-8"))
-                self.entries = [Entry(**e) for e in raw.get("entries", [])]
-                self.blind = raw.get("blind", False) is True
-                self.meta_free_verified = raw.get("meta_free_verified", False) is True
-                for e in self.entries:
-                    _validate_entry(e)
-            except (OSError, ValueError, TypeError, AttributeError):
-                self.unreadable = True  # fail closed; never silently restart at 0
+                with self._locked():
+                    self._load()
+            except CreditBudgetExceeded:
+                self.unreadable = True  # cannot read safely; fail closed
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Thread lock, plus the cross-process file lock for a persisted ledger.
+        Re-entrant: the file lock is taken by the outermost call only."""
+        with self._lock:
+            if self._file_lock is not None and self._depth == 0:
+                self._file_lock.acquire()
+            self._depth += 1
+            try:
+                yield
+            finally:
+                self._depth -= 1
+                if self._depth == 0 and self._file_lock is not None:
+                    self._file_lock.release()
+
+    def _load(self) -> None:
+        """(Re)read the file. A missing file leaves memory as it is; an unreadable
+        one sets ``unreadable`` and drops every parsed entry, so nothing downstream
+        ever computes on half-validated data."""
+        if self.path is None or self.unreadable or not self.path.exists():
+            return
+        try:
+            raw = json.loads(self.path.read_text(encoding="utf-8"))
+            entries = [Entry(**e) for e in raw.get("entries", [])]
+            for e in entries:
+                _validate_entry(e)
+            self.blind = raw.get("blind", False) is True
+            self.meta_free_verified = raw.get("meta_free_verified", False) is True
+            self.entries = entries
+        except (OSError, ValueError, TypeError, AttributeError):
+            self.entries = []
+            self.blind = False
+            self.meta_free_verified = False
+            self.unreadable = True  # fail closed; never silently restart at 0
 
     # ---- queries -------------------------------------------------------
     @property
@@ -192,7 +328,10 @@ class CreditLedger:
         if price is not None:
             return price
         seen = self.tool_cost(tool)
-        return seen if seen is not None else self.unknown_cost_value
+        # A learned 0 is not evidence the tool is free (iv_radar once charged 0 and
+        # was later priced above 0); only a catalog price, handled above, may
+        # reserve less than the unknown-price reserve.
+        return seen if seen else self.unknown_cost_value
 
     def authorize(
         self,
@@ -212,11 +351,17 @@ class CreditLedger:
         only a balance observed during the current run, so a balance persisted by
         an earlier run is never trusted for the floor. It defaults to the ledger's
         last balance for direct callers."""
-        with self._lock:
+        with self._locked():
+            self._load()
+            if self.unreadable:
+                raise CreditBudgetExceeded(
+                    "Refusing request: ledger file is unreadable; fix or move it.",
+                    budget=budget,
+                    floor=floor,
+                )
             reserve = self.reserve_for(tool, price)
             balance = self.last_balance if balance is ... else balance
             checks = [
-                (self.unreadable, "ledger file is unreadable; fix or move it"),
                 (self.blind, "credit balance unknown after an earlier response"),
                 (self.calls(phase) >= call_cap, f"{phase} call cap {call_cap} reached"),
                 (self.spent(phase) + reserve > budget, f"{phase} credit budget {budget}"),
@@ -258,7 +403,42 @@ class CreditLedger:
     ) -> Entry:
         """Record one request. ``balance_before`` defaults to the last known balance;
         tool requests pass the balance captured before sending. Credit-endpoint
-        reads never derive a cost from a balance difference."""
+        reads never derive a cost from a balance difference.
+
+        The response already exists when this runs, so a lock failure does not raise:
+        the entry is kept in memory and the ledger is marked unreadable, which refuses
+        every later request from this instance and never overwrites the file."""
+        fields: dict[str, Any] = {
+            "tool": tool,
+            "ticker": ticker,
+            "status": status,
+            "balance_after": balance_after,
+            "charged": charged,
+            "balance_source": balance_source,
+            "credit_header_names": credit_header_names,
+            "balance_before": balance_before,
+        }
+        try:
+            with self._locked():
+                self._load()
+                return self._record_locked(phase, **fields)
+        except CreditBudgetExceeded:
+            self.unreadable = True
+            return self._record_locked(phase, **fields)
+
+    def _record_locked(
+        self,
+        phase: str,
+        *,
+        tool: str | None,
+        ticker: str | None,
+        status: int,
+        balance_after: int | None,
+        charged: int | None,
+        balance_source: str | None,
+        credit_header_names: list[str] | None,
+        balance_before: int | None | object,
+    ) -> Entry:
         with self._lock:
             meta = _is_meta(phase)
             before = self.last_balance if balance_before is ... else balance_before
@@ -291,14 +471,18 @@ class CreditLedger:
 
     def clear_blind(self) -> None:
         """Call only after a fresh balance read succeeded."""
-        with self._lock:
-            if self.blind:
+        with self._locked():
+            self._load()
+            if self.blind and not self.unreadable:
                 self.blind = False
                 self._save()
 
     def mark_meta_free(self) -> None:
         """Call only after verify_meta_free showed the credit endpoints cost 0."""
-        with self._lock:
+        with self._locked():
+            self._load()
+            if self.unreadable:
+                return
             self.meta_free_verified = True
             for e in self.entries:
                 if _is_meta(e.phase) and e.cost is None:

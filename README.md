@@ -166,13 +166,16 @@ Before each tool request, the ledger checks:
 
 The price reserved for a request is the tool's catalog price when the catalog lists it; otherwise the largest cost previously recorded for that tool; otherwise 20 Credits (above the largest single-call cost observed when this adapter was built, 15 Credits).
 
-After each response, the ledger takes the cost from `X-Credits-Charged`, or from the drop in `X-Credits-Remaining`. If the balance header is missing, it calls `GET /api/credits/balance`. A cost is never assumed to be zero without evidence: an HTTP error status counts as 0 (the SDK README states failed calls are not charged); a negative charge, a balance increase (for example a top-up) or a missing balance count as unknown, and unknown costs count as at least 20 Credits in every budget. If the cost of a tool request cannot be established (for example a response without credit headers, or a transport failure, while the balance endpoint is also unavailable), the ledger becomes blind and refuses further tool requests until a later balance read succeeds, normally at the start of the next run. An unreadable ledger file refuses every request; move or fix the file.
+After each response, the ledger takes the cost from `X-Credits-Charged`, or from the drop in `X-Credits-Remaining`. If the balance header is missing, it calls `GET /api/credits/balance`. A cost is never assumed to be zero without evidence: an HTTP error status counts as 0 (the SDK README states failed calls are not charged); a negative charge, a balance increase (for example a top-up) or a missing balance count as unknown, and unknown costs count as at least 20 Credits in every budget. If the cost of a tool request cannot be established (for example a response without credit headers, or a transport failure, while the balance endpoint is also unavailable), the ledger becomes blind and refuses further tool requests until a later balance read succeeds, normally at the start of the next run. An unreadable ledger file refuses every request, on every call, with `CreditBudgetExceeded`; move or fix the file.
 
-The price reserved for a tool is learned only from successful calls; a failed call (recorded at 0 because it is not charged) never lowers it.
+The ledger file is shared safely between processes. Every read, check, record and save runs under a lock file next to the ledger (`<ledger>.lock`, standard library only) and re-reads the file first, so two processes on one ledger never overwrite each other's entries. If the lock cannot be taken within 10 seconds, the request is refused with `CreditBudgetExceeded` and nothing is sent. A lock file older than 30 seconds is treated as left by a dead process and removed.
+
+The price reserved for a tool is learned only from successful calls; a failed call (recorded at 0 because it is not charged) never lowers it. A learned cost of 0 does not lower it either when the catalog has no price for the tool: the reserve stays at the unknown-price reserve (20 Credits), so `--max-credits 0` refuses such a call. A catalog price, when present, always wins.
 
 Known limits:
 
-- The ledger file is not locked. Do not run two processes on the same ledger file at once.
+- The ledger lock is held only while the file is read or written, not while a request is in flight. Two processes sharing one ledger can both pass the budget check before either records its call, so each can exceed a shared budget by one in-flight call per process. Removing a stale lock is not atomic against another process doing the same.
+- If the lock cannot be taken while recording a response that has already arrived, that call is kept in memory only (not written to the file) and the ledger refuses every later request from that client.
 - A request that times out but is billed by HPSILab after the timeout can be under-counted by that call's price if the next response carries `X-Credits-Charged`. The balance and the floor check stay correct because they use the balance HPSILab reports.
 - If the first-use check of the credit endpoints fails, that run is usually refused on its budget even though nothing was spent. This fails closed, and the next run checks again.
 - A hand-edited or damaged ledger file (for example a negative or non-numeric cost) is treated as unreadable and refuses every request.
@@ -203,7 +206,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 289 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
+The expected result is 304 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 

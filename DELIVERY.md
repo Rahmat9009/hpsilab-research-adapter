@@ -55,12 +55,10 @@ Prices from the live catalog: analyze_stock 12, ai_prediction 2, iv_radar 3, opt
 - **Ship-check responses were not stored, and its printed summary was lost.** HTTP success for those 17 calls is proven by the ledger. Their normalization is not separately evidenced. Normalization was checked offline on the 6 real probe responses instead. `tools/ship_check.py` now prints each row live and writes `.credits/ship_summary.json`, so this cannot recur silently.
 - **Live coverage is one day, three tickers**, against hpsilab-mcp 0.14.2 shapes observed on 2026-11-22. If HPSILab changes a response, `schemas/`, the fixtures and `normalize.EXPECTED_FIELDS` must be updated together.
 - **Credit ledger limits**, also documented in the README:
-  - **No file lock.** Do not run two processes on one ledger file.
+  - **Lock scope.** The ledger file is locked (`<ledger>.lock`) while it is read or written, not while a request is in flight. Two processes on one ledger can both pass the budget check before either records, so each can exceed a shared budget by one in-flight call per process. Removing a stale lock is not atomic against another process doing the same. If the lock cannot be taken while recording a response that has already arrived, that call is kept in memory only and the client refuses every later request.
   - **Late billing.** A timeout billed after the fact can be under-counted by one call's price.
   - **Failed first-use check.** If the first-use check of the credit endpoints fails, that run is refused even though nothing was spent.
-  - **Zero-cost calls.** A successful call charged 0 sets that tool's learned reserve to 0 when the catalog has no price for it. iv_radar is the one case observed, and the catalog now prices it at 3.
   - **Top-ups.** A top-up between runs, combined with responses that carry only `X-Credits-Remaining`, can mis-estimate one call's cost.
-  - **Damaged ledger.** A library client that hits an unreadable ledger raises `TypeError` instead of `CreditBudgetExceeded` on its second call. No request is sent, and the CLI is unaffected.
 - **`Result.error` is reserved.** Errors are raised, never returned.
 - **The pre-commit hooks are configured but not installed** in this checkout (`pre-commit install` has not been run). gitleaks was run manually.
 - **The README's "About HPSILab" section is factual but generic.** It uses only SDK metadata and the link. The owner may replace it with approved wording.
