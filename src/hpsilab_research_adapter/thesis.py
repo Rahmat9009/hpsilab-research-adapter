@@ -48,6 +48,40 @@ EXCLUDED_FIELDS: tuple[tuple[str, str], ...] = (
     (tools.AI_PREDICTION, "suggested_take_profit_price"),
 )
 
+# Every field name this module can put in an evidence or missing entry. The share-safe
+# summary tool checks report field names against this set.
+FIELD_NAMES: frozenset[str] = frozenset(
+    {
+        "items",
+        "ensemble_up_probability",
+        "model_consensus",
+        "signal",
+        "bullish_factors",
+        "bearish_factors",
+        "bullish_factors/bearish_factors",
+        "confidence_score",
+        "start_price",
+        "lower_bound",
+        "upper_bound",
+        "median_price",
+        "median_price/start_price",
+        "start_price/lower_bound/upper_bound",
+        "prob_above",
+        "prob_below",
+        "regime",
+        "regimeConfidence",
+        "range_90",
+        "atm_iv",
+        "gex_total",
+        "weekly_expected_move",
+        "results",
+        "iv_rank",
+        "iv_percentile",
+        "iv_hv_spread",
+        "term_structure",
+    }
+)
+
 RANGE_LOW = 0.45
 RANGE_HIGH = 0.55
 
@@ -659,6 +693,7 @@ def main(
     results: dict[str, Result | Exception | None] = {}
     failed_calls = 0
     stopping: errors.AdapterError | None = None
+    client_created = False
     try:
         run_phase = f"thesis-{datetime.now(UTC):%Y%m%dT%H%M%S}-{id(args) % 100000}"
         client = factory(
@@ -669,6 +704,7 @@ def main(
             total_budget=args.total_credits,
             min_balance=args.min_balance,
         )
+        client_created = True
         try:
             for tool in tools.TOOL_NAMES:
                 try:
@@ -688,6 +724,12 @@ def main(
         for tool in tools.TOOL_NAMES:
             results.setdefault(tool, exc)
 
+    if not client_created and stopping is not None:
+        # The client could not be built (for example the key is missing), so no tool was
+        # called. Print no report: it would list six tools as failed calls.
+        print("No request was sent; no report was produced.", file=sys.stderr)
+        return cli._exit_code_for(stopping)
+
     report = evaluate(thesis, results)
     if args.json:
         print(json.dumps(to_dict(report), indent=2))
@@ -700,6 +742,7 @@ def main(
 
 __all__ = [
     "DISCLAIMER",
+    "FIELD_NAMES",
     "Evidence",
     "MissingItem",
     "Thesis",

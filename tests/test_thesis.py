@@ -536,3 +536,14 @@ def test_main_usage_errors_never_build_a_client(argv: list[str]) -> None:
     with pytest.raises(SystemExit) as caught:
         thesis.main(argv, client_factory=forbidden)
     assert caught.value.code == 2
+
+
+def test_main_without_client_prints_no_report(capsys: pytest.CaptureFixture[str]) -> None:
+    factory = FakeFactory(error=errors.AuthError("synthetic key problem", attempts=0))
+    code = thesis.main(
+        ["TEST", "--direction", "up", "--horizon", "3", "--no-ledger"], client_factory=factory
+    )
+    captured = capsys.readouterr()
+    assert code == 3
+    assert captured.out == ""
+    assert "No request was sent" in captured.err

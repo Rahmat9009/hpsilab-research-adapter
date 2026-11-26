@@ -28,12 +28,16 @@ makes exactly one pass over the six GET tools for NVDA with a persistent ledger:
 default `.credits/ledger.json` under the repository root, or the file given with
 `--ledger PATH` (for example the main repository's ledger, used directly instead of a
 copy). The limits are the same either way:
-`max_credits=40`, `total_budget=190` and `min_balance=1800`. The owner approved +40
-credits on 2026-11-26 for exactly one NVDA pass beyond the original 150 cap. The script
-refuses to start if the remaining total budget is below the price of one pass. It writes
+`max_credits=40`, `total_budget=190` and `min_balance=1800`. These are fixed
+project budgets: 40 credits per run, 190 in total across all runs recorded in the ledger.
+One pass costs 41 credits at the catalog prices of 2026-11-22, so the per-run cap can stop
+the last tool; `monte_carlo` runs first. The script refuses to start if the ledger file
+does not exist (the total budget needs its history; an empty `--ledger` value is refused
+too), or if the remaining total budget is below the 40-credit run cap. It writes
 `.probe/thesis_NVDA.md` and `.probe/thesis_NVDA.json` (git-ignored; real values are never
-committed) and prints only stance tallies, the missing count and the credits used. Every refusal
-(bad thesis, unreadable ledger, budget too low, bad configuration) happens before any
+committed) and prints only the stated thesis, stance tallies, the missing count, the credits used and
+the report path. It exits 5 if a limit stopped the pass early. Every refusal
+(bad thesis, missing or unreadable ledger, budget too low, bad configuration) happens before any
 request is sent.
 
 To share a report with an external reviewer, run `tools/thesis_summary.py` on the JSON

@@ -1,6 +1,7 @@
 """Share-safe Markdown summary of a thesis report JSON, for an external reviewer.
 
 Usage:  python tools/thesis_summary.py PATH_TO_REPORT.json
+        python tools/thesis_summary.py --help
 
 The input is the file tools/thesis_demo.py (or thesis.to_dict) writes. The output
 contains only field names, stance labels, horizon statuses, rule text, counts and
@@ -15,17 +16,20 @@ integration, not verified or endorsed by HPSILab.
 from __future__ import annotations
 
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Any
 
-from hpsilab_research_adapter import thesis, tools
+from hpsilab_research_adapter import errors, thesis, tools
 
-_FIELD_RE = re.compile(r"[A-Za-z0-9_]+(?:/[A-Za-z0-9_]+)*")
-_CLASS_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
+_ERROR_CLASS_NAMES = frozenset(
+    name
+    for name, obj in vars(errors).items()
+    if isinstance(obj, type) and issubclass(obj, Exception)
+) | {"Exception", "ValueError", "TypeError", "KeyError", "RuntimeError", "OSError"}
 _KNOWN_DETAILS = frozenset(
     {
+        "not a Result",
         "expected a number 0-1",
         "expected a number",
         "expected numbers",
@@ -51,7 +55,7 @@ def _as_list(value: Any) -> list[Any]:
 
 
 def _field(value: Any) -> str:
-    if isinstance(value, str) and _FIELD_RE.fullmatch(value):
+    if isinstance(value, str) and value in thesis.FIELD_NAMES:
         return value
     return _PLACEHOLDER
 
@@ -65,10 +69,8 @@ def _choice(value: Any, allowed: tuple[str, ...]) -> str:
 
 
 def _detail(value: Any) -> str | None:
-    """A fixed message or an exception class name; anything else is dropped."""
-    if not isinstance(value, str):
-        return None
-    if value in _KNOWN_DETAILS or _CLASS_RE.fullmatch(value):
+    """A fixed message or a known exception class name; anything else is dropped."""
+    if isinstance(value, str) and (value in _KNOWN_DETAILS or value in _ERROR_CLASS_NAMES):
         return value
     return None
 
@@ -106,7 +108,7 @@ def summarize(report: Any) -> str:
         "This summary lists field names, labels, rules, counts and reasons only. It "
         "contains no value observed in any HPSILab response.",
         "",
-        "## Tools called",
+        "## Tool outcomes",
         "",
     ]
     for name in tools.TOOL_NAMES:
@@ -178,7 +180,15 @@ def summarize(report: Any) -> str:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 1 or argv[0] in ("-h", "--help"):
+    if argv in (["-h"], ["--help"]):
+        print("usage: thesis_summary.py PATH_TO_REPORT.json")
+        print(
+            "Share-safe summary of a thesis report: field names, labels, rules and counts "
+            "only, no observed value. Research only; independent, unverified third-party "
+            "integration, not verified by HPSILab."
+        )
+        return 0
+    if len(argv) != 1:
         print("usage: thesis_summary.py PATH_TO_REPORT.json", file=sys.stderr)
         return 2
     try:

@@ -14,10 +14,9 @@ It is read-only and for research and analysis only. See `TERMS.md`.
 - **Damaged ledger fails closed.** A hand-edited or damaged ledger file refuses every request.
 - **Zero-cost learned reserve fix.** A learned cost of 0 no longer lowers the reserved price when the catalog has no price for the tool.
 - **Thesis evidence module** (`hpsilab_research_adapter.thesis`, see `docs/THESIS.md`): fixed, documented rules label each observed value `supports`, `challenges`, `neutral` or `context` for a thesis the user states. Research only; no verdict, no advice.
-- **Demo script** `tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]`: hand-run, limits 40 credits per run, 190 in total, balance floor 1800, refuses before any request when the configuration is unusable. `--ledger` uses a given ledger file directly.
+- **Demo script** `tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]`: hand-run, limits 40 credits per run, 190 in total, balance floor 1800, refuses before any request when the configuration is unusable (including a missing ledger file). `--ledger` uses a given ledger file directly. One pass costs 41 credits at the catalog prices of 2026-11-22, which is above the 40-credit run cap, so the last tool of a pass can be refused; `monte_carlo` runs first so that the horizon-bearing tool is never the one lost.
 - **Summary tool** `tools/thesis_summary.py REPORT.json`: a share-safe Markdown summary for an external reviewer that contains no value observed in any HPSILab response.
-- The CLI command is `hpsilab-research`; `LICENSE` is the standard MIT text.
-- Test suite: **386 passed, 0 skipped** (offline).
+- Test suite: **401 passed, 0 skipped** (offline).
 
 v0.2.0 is new and has not been reviewed by anyone outside this project. HPSILab has not reviewed, verified or endorsed it.
 
@@ -42,7 +41,7 @@ v0.2.0 is new and has not been reviewed by anyone outside this project. HPSILab 
 | Live ship check, AAPL, SPY, NVDA x 6 tools | 17 of 18 planned calls sent, all 17 HTTP 200. The credit guard refused the 18th, NVDA `monte_carlo`, before sending it, because it would have crossed the 112-credit run budget. NVDA `monte_carlo` is covered by the probe. 109 credits. |
 | CLI end to end (live) | `hpsilab SPY --tool iv_radar --json` (the command was named `hpsilab` at the time; it is now `hpsilab-research`): HTTP 200, recorded in the ledger, 0 credits. |
 | Normalization of real responses (offline) | The final normalizer was run on the 6 real probe responses (NVDA): 6/6 parse with every expected field present (0 missing). `monte_carlo` reports its horizon. Counts only; no values were printed. |
-| Test suite | **289 passed, 0 skipped** on `feat/adapter-v1` at v0.1.0 (386 on `release/v0.2.0`). The same count comes from a fresh clone with a clean `pip install .`, which installs only `hpsilab-mcp==0.14.2` and the adapter. No x402 or wallet packages are installed. |
+| Test suite | **289 passed, 0 skipped** on `feat/adapter-v1` at v0.1.0 (401 on `release/v0.2.0`). The same count comes from a fresh clone with a clean `pip install .`, which installs only `hpsilab-mcp==0.14.2` and the adapter. No x402 or wallet packages are installed. |
 | Rahmat's safety tests | `tests/test_readonly.py`, `tests/readonly_scan.py`, `tests/test_secret_scanner.py`, `tools/scan_secrets.py`, `tests/test_errors.py`, `tests/sdk_contract.py`, `.pre-commit-config.yaml` and `.gitleaks.toml` are unchanged from base commit `c06bb13`. All 12 error contracts pass against the real client; none are skipped. |
 | Read-only boundary | The AST scan of all production Python finds no broker imports and no `submit_order`, `place_order` or `execute_order`. |
 | Secrets and data | gitleaks working-tree scan is clean, and its self-test detects the synthetic canary. The fixtures share no value with the real responses: an automated comparison found 0 overlaps out of 5,485 distinctive values. `.probe/` and `.credits/` are gitignored and untracked. |
@@ -69,7 +68,7 @@ Prices from the live catalog: analyze_stock 12, ai_prediction 2, iv_radar 3, opt
 - **Live coverage is one day, three tickers**, against hpsilab-mcp 0.14.2 shapes observed on 2026-11-22. If HPSILab changes a response, `schemas/`, the fixtures and `normalize.EXPECTED_FIELDS` must be updated together.
 - **Credit ledger limits**, also documented in the README:
   - **Lock tested on Windows only.** The POSIX path has not been exercised.
-  - **Lock scope.** The ledger file is locked (`<ledger>.lock`) while it is read or written, not while a request is in flight. Two processes on one ledger can both pass the budget check before either records, so each can exceed a shared budget by one in-flight call per process. Removing a stale lock is not atomic against another process doing the same. If the lock cannot be taken while recording a response that has already arrived, that call is kept in memory only and the client refuses every later request.
+  - **Lock scope.** The ledger file is locked (`<ledger>.lock`) while it is read or written, not while a request is in flight. Two processes on one ledger can both pass the budget check before either records, so each can exceed a shared budget by one in-flight call per process. Removing a stale lock is not atomic against another process doing the same. If the lock cannot be taken while recording a response that has already arrived, that call is kept in memory only and the client refuses every later request. The same happens if the ledger file cannot be written (for example Windows refuses to replace it while another process holds it open).
   - **Late billing.** A timeout billed after the fact can be under-counted by one call's price.
   - **Failed first-use check.** If the first-use check of the credit endpoints fails, that run is refused even though nothing was spent.
   - **Top-ups.** A top-up between runs, combined with responses that carry only `X-Credits-Remaining`, can mis-estimate one call's cost.
@@ -78,7 +77,6 @@ Prices from the live catalog: analyze_stock 12, ai_prediction 2, iv_radar 3, opt
 - **`Result.error` is reserved.** Errors are raised, never returned.
 - **The pre-commit hooks are configured but not installed** in this checkout (`pre-commit install` has not been run). gitleaks was run manually.
 - **The README's "About HPSILab" section is factual but generic.** It uses only SDK metadata and the link. The owner may replace it with approved wording.
-- **The local development `.venv` editable install reports version 0.0.1.** A reinstall was blocked by the permission system. A fresh install reports 0.2.0.
 - **Human-only actions, not done:** pushing to the remote, merging to a default branch, changing repository visibility, granting access, and sending any message.
 
 ## Next

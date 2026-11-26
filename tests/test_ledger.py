@@ -887,3 +887,29 @@ def test_catalog_price_still_wins_over_a_learned_zero(tmp_path: Path):
     client.run("analyze_stock", "TEST")
     assert len(priced.tool_hits) == 1
     assert ledger.spent("run2") == 3
+
+
+def test_failed_save_keeps_the_charge_and_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """os.replace can fail on Windows while another process holds the ledger open. The
+    charge must not be dropped by the next reload, and no request may go through."""
+    ledger = CreditLedger(tmp_path / "ledger.json")
+    ledger.record("p", tool="t", ticker="X", status=200, balance_after=95, charged=5)
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def flaky(src, dst):
+        calls["n"] += 1
+        raise PermissionError(5, "sharing violation")
+
+    monkeypatch.setattr(os, "replace", flaky)
+    entry = ledger.record("p", tool="t", ticker="X", status=200, balance_after=88, charged=7)
+    assert entry.cost == 7  # record() does not raise after the response exists
+    assert calls["n"] == 1
+    monkeypatch.setattr(os, "replace", real_replace)
+    assert ledger.spent() == 12  # still counted in memory
+    with pytest.raises(CreditBudgetExceeded):
+        ledger.authorize("p", budget=1000, call_cap=100, price=1)
+    assert ledger.spent() == 12
+    assert not (tmp_path / "ledger.tmp").exists()

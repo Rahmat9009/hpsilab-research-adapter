@@ -26,14 +26,26 @@ HPSILab product, and HPSILab has not verified or endorsed it.
 - New `tools/thesis_summary.py`: prints a share-safe Markdown summary of a thesis
   report JSON. It contains field names, stance labels, rule text, counts and reasons,
   and no value observed in any HPSILab response.
-- The command-line program is now named `hpsilab-research`.
-- `LICENSE` is the standard MIT text.
-- Wording across the repository: an independent, unverified third-party integration;
-  not an official HPSILab product; not verified or endorsed by HPSILab.
-- Test suite: 386 tests, all offline.
+- Credit ledger: if saving the ledger file fails (for example Windows refuses to replace
+  a file another process holds open), the charge stays in memory and the ledger is
+  marked unreadable, so every later request is refused instead of the charge being
+  forgotten by a reload.
+- `tools/thesis_demo.py` now refuses a missing ledger file or an empty `--ledger` value,
+  refuses when the remaining total budget is below the 40-credit run cap, runs
+  `monte_carlo` first, exits 5 when a limit stops the pass early, and reports the credits
+  used as unknown when the ledger cannot be read back. `-h`/`--help` prints the usage.
+- `tools/thesis_summary.py`: field names and details are now checked against fixed
+  whitelists, the heading is "Tool outcomes", and `-h`/`--help` exits 0.
+- `python -m hpsilab_research_adapter.thesis` prints no report when the client could not
+  be created (for example no key), because no tool was called.
+- Test suite: 401 tests, all offline.
 
 ## 0.1.0
 
+- Late in 0.1.0: the command-line program was renamed from `hpsilab` to
+  `hpsilab-research`, `LICENSE` was replaced by the standard MIT text, and the wording
+  across the repository became: an independent, unverified third-party integration; not
+  an official HPSILab product; not verified or endorsed by HPSILab.
 - Initial read-only adapter around the `hpsilab-mcp` 0.14.2 SDK for six research tools:
   `analyze_stock`, `ai_prediction`, `iv_radar`, `option_pressure`,
   `pretrade_risk_scan` and `monte_carlo`.

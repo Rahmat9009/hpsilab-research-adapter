@@ -32,6 +32,9 @@ Guarantees (each is covered by tests/test_ledger.py):
   other's entries. If the lock cannot be taken within the timeout the request is
   refused (``CreditBudgetExceeded``). A lock older than ``lock_stale_after``
   seconds is treated as left by a dead process and removed.
+* If saving the file fails (``OSError``), the entry stays in memory and the ledger is
+  marked unreadable, so every later request from this instance is refused and the
+  unsaved charge is never dropped by a reload.
 * A learned cost of 0 does not lower a tool's reserve below
   ``UNKNOWN_PRICE_RESERVE`` when the catalog has no price for it.
 
@@ -490,17 +493,28 @@ class CreditLedger:
             self._save()
 
     def _save(self) -> None:
+        """Write the file. If the write fails (for example Windows refuses os.replace
+        while another process holds the ledger open), the entries stay in memory and the
+        ledger is marked unreadable: fail closed, so a later authorize never reloads an
+        older file and forgets a charge that was never persisted."""
         if self.path is None or self.unreadable:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         payload = {
             "blind": self.blind,
             "meta_free_verified": self.meta_free_verified,
             "entries": [asdict(e) for e in self.entries],
         }
-        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-        os.replace(tmp, self.path)
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(tmp, self.path)
+        except OSError:
+            self.unreadable = True
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 # ---- parsing (credit endpoint formats are undocumented; parse tolerantly) ----

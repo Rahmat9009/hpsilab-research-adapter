@@ -281,3 +281,185 @@ def test_demo_bad_arguments_refuse(capsys: pytest.CaptureFixture[str]) -> None:
     assert demo.main(["up", "10", "extra"]) == 2
     assert demo.main(["--ledger"]) == 2
     assert capsys.readouterr().out.count("REFUSED") == 4
+
+
+# -- review fixes ---------------------------------------------------------
+
+
+def test_single_token_injections_are_dropped() -> None:
+    report = _report_dict()
+    report["evidence"][0]["field"] = "SentinelFieldWord"
+    report["missing"][0]["detail"] = "SentinelDetailWord"
+    report["missing"].append(
+        {"tool": "analyze_stock", "field": "12345", "reason": "unparseable", "detail": "Bullish_42"}
+    )
+    text = summary.summarize(report)
+    for word in ("SentinelFieldWord", "SentinelDetailWord", "Bullish_42", "12345"):
+        assert word not in text
+
+
+def test_every_field_the_rules_emit_is_whitelisted() -> None:
+    report = thesis.to_dict(thesis.evaluate(thesis.Thesis("test", "up", 10), _results()))
+    for item in report["evidence"] + report["missing"]:
+        if item["field"] is not None:
+            assert item["field"] in thesis.FIELD_NAMES
+    ranged = thesis.to_dict(thesis.evaluate(thesis.Thesis("test", "range", 10), _results()))
+    for item in ranged["evidence"] + ranged["missing"]:
+        if item["field"] is not None:
+            assert item["field"] in thesis.FIELD_NAMES
+
+
+def test_known_exception_class_detail_is_kept() -> None:
+    text = summary.summarize(_report_dict())
+    assert "(UpstreamError)" in text
+
+
+def test_summary_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    assert summary.main(["--help"]) == 0
+    assert summary.main(["-h"]) == 0
+    out = capsys.readouterr()
+    assert "usage: thesis_summary.py" in out.out and out.err == ""
+    assert summary.main(["a", "b"]) == 2
+
+
+# -- thesis_demo refusals -------------------------------------------------
+
+
+def _forbid_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("a client must not be created")
+
+    monkeypatch.setattr(demo.ResearchClient, "from_env", boom)
+
+
+def test_demo_refuses_missing_ledger(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _forbid_client(monkeypatch)
+    missing = tmp_path / "nope" / "ledger.json"
+    assert demo.main(["--ledger", str(missing)]) == 3
+    assert "does not exist" in capsys.readouterr().out
+    assert not missing.exists()
+
+
+@pytest.mark.parametrize("argv", [["--ledger", ""], ["--ledger="]])
+def test_demo_rejects_empty_ledger_value(
+    argv: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    assert demo.main(argv) == 2
+    assert "REFUSED" in capsys.readouterr().out
+
+
+def test_demo_help_exits_zero_before_any_work(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _forbid_client(monkeypatch)
+    assert demo.main(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "thesis_demo.py" in out and "REFUSED" not in out
+
+
+def _synthetic_ledger(path: Path, spent_before: int, iv_cost: int = 0) -> None:
+    """Synthetic history: one successful call per tool, then filler up to spent_before."""
+    costs = {
+        "analyze_stock": 12,
+        "ai_prediction": 2,
+        "iv_radar": iv_cost,
+        "option_pressure": 4,
+        "pretrade_risk_scan": 15,
+        "monte_carlo": 5,
+    }
+    entries = [
+        {
+            "at": "2000-01-01T00:00:00+00:00",
+            "phase": "old",
+            "tool": name,
+            "ticker": "TEST",
+            "status": 200,
+            "balance_before": None,
+            "balance_after": None,
+            "cost": cost,
+        }
+        for name, cost in costs.items()
+    ]
+    filler = dict(entries[0], tool="filler_tool", cost=spent_before - sum(costs.values()))
+    entries.append(filler)
+    path.write_text(json.dumps({"entries": entries}), encoding="utf-8")
+
+
+def test_demo_precheck_passes_with_zero_cost_tool_and_147_spent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """iv_radar learned at 0 must not be reserved at the unknown price by the pre-check."""
+    ledger = tmp_path / "ledger.json"
+    _synthetic_ledger(ledger, 147)
+    reached: list[str] = []
+
+    def stop(*args: Any, **kwargs: Any) -> None:
+        reached.append("from_env")
+        raise errors.AuthError("synthetic", attempts=0)
+
+    monkeypatch.setattr(demo.ResearchClient, "from_env", stop)
+    assert demo.main(["--ledger", str(ledger)]) == 3
+    assert reached == ["from_env"]  # got past the budget pre-check
+    assert "AuthError before any request" in capsys.readouterr().out
+
+
+def test_demo_refuses_when_remaining_is_below_the_run_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _forbid_client(monkeypatch)
+    ledger = tmp_path / "ledger.json"
+    _synthetic_ledger(ledger, 160)  # remaining 30 < 40
+    assert demo.main(["--ledger", str(ledger)]) == 4
+    assert "REFUSED" in capsys.readouterr().out
+
+
+def test_demo_refuses_when_recorded_pass_price_exceeds_run_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _forbid_client(monkeypatch)
+    ledger = tmp_path / "ledger.json"
+    _synthetic_ledger(ledger, 100, iv_cost=5)  # recorded pass = 43 > 40
+    assert demo.main(["--ledger", str(ledger)]) == 4
+
+
+def test_demo_runs_monte_carlo_first() -> None:
+    assert demo.RUN_ORDER[0] == tools.MONTE_CARLO
+    assert sorted(demo.RUN_ORDER) == sorted(tools.TOOL_NAMES)
+
+
+class _StopClient:
+    def run(self, tool: str, ticker: str) -> Any:
+        raise errors.CreditBudgetExceeded("synthetic")
+
+    def close(self) -> None:
+        pass
+
+
+def test_demo_stopped_run_exits_nonzero_and_unreadable_credits_are_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ledger = tmp_path / "ledger.json"
+    _synthetic_ledger(ledger, 100)
+    monkeypatch.setattr(demo, "OUT", tmp_path / "out")
+    monkeypatch.setattr(demo.ResearchClient, "from_env", lambda **kw: _StopClient())
+    real = demo.CreditLedger
+    state = {"n": 0}
+
+    class _Ledger(real):  # the read-back after the run finds an unreadable ledger
+        def __init__(self, *a: Any, **k: Any) -> None:
+            super().__init__(*a, **k)
+            state["n"] += 1
+            if state["n"] > 1:
+                self.unreadable = True
+                self.entries = []
+
+    monkeypatch.setattr(demo, "CreditLedger", _Ledger)
+    assert demo.main(["--ledger", str(ledger)]) == 5
+    out = capsys.readouterr().out
+    assert "STOPPED: CreditBudgetExceeded" in out
+    assert "credits used this run: unknown" in out
+    payload = json.loads((tmp_path / "out" / "thesis_NVDA.json").read_text(encoding="utf-8"))
+    assert payload["credits_used"] is None
+    assert "Credits used" not in summary.summarize(payload)
