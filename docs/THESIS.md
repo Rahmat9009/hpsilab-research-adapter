@@ -23,13 +23,31 @@ and a horizon in whole days (1 to 365). Nothing is defaulted inside the module.
 
 ## The live demo
 
-`tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]]` (default `up`, 10) makes exactly one
-pass over the six GET tools for NVDA with the persistent ledger `.credits/ledger.json`,
+`tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]` (default `up`, 10)
+makes exactly one pass over the six GET tools for NVDA with a persistent ledger: by
+default `.credits/ledger.json` under the repository root, or the file given with
+`--ledger PATH` (for example the main repository's ledger, used directly instead of a
+copy). The limits are the same either way:
 `max_credits=40`, `total_budget=190` and `min_balance=1800`. The owner approved +40
 credits on 2026-11-26 for exactly one NVDA pass beyond the original 150 cap. The script
 refuses to start if the remaining total budget is below the price of one pass. It writes
 `.probe/thesis_NVDA.md` and `.probe/thesis_NVDA.json` (git-ignored; real values are never
-committed) and prints only stance tallies, the missing count and the credits used.
+committed) and prints only stance tallies, the missing count and the credits used. Every refusal
+(bad thesis, unreadable ledger, budget too low, bad configuration) happens before any
+request is sent.
+
+To share a report with an external reviewer, run `tools/thesis_summary.py` on the JSON
+file. It prints a Markdown summary that contains no observed value; see the next section.
+
+## The share-safe summary
+
+`python tools/thesis_summary.py .probe/thesis_NVDA.json` reads a report JSON (the file
+`thesis_demo.py` or `thesis.to_dict` writes) and prints Markdown with: the thesis
+(ticker, direction, horizon), which tools were called and which succeeded, each field
+used with its stance label, horizon status and rule text, tallies per stance, the
+missing list with reasons, the credits used if the file records them, and the fixed
+disclaimer. It never prints an observed price, probability, score, date, level or word
+from HPSILab responses; only field names, labels, rule text, counts and reasons.
 
 ## Rules (verbatim)
 

@@ -1,11 +1,14 @@
 """Live thesis demo: one NVDA pass over the six research tools. Run by hand, never in CI.
 
-Usage from the repository root:  python tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]]
-DIRECTION is up, down or range (default up); HORIZON_DAYS defaults to 10.
+Usage from the repository root:
+    python tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]
+DIRECTION is up, down or range (default up); HORIZON_DAYS defaults to 10. --ledger PATH
+uses that ledger file directly (default .credits/ledger.json under the repository root),
+for example the main repository's ledger, so it never has to be copied.
 
 The thesis comes from the command line; this script never chooses one. It makes one
 pass over the six GET tools through ResearchClient.from_env with the persistent
-ledger .credits/ledger.json, then writes the evidence report to .probe/thesis_NVDA.md
+ledger (default .credits/ledger.json), then writes the evidence report to .probe/thesis_NVDA.md
 and .probe/thesis_NVDA.json (git-ignored; real values are never committed). Only stance
 tallies, the missing count and the credits used are printed.
 
@@ -16,6 +19,7 @@ HPSILAB_API_KEY by the client and is never printed.
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from datetime import UTC, datetime
@@ -50,16 +54,35 @@ def _price_sum(ledger: CreditLedger) -> int:
     return total
 
 
+def _parse(argv: list[str]) -> tuple[list[str], Path]:
+    """Split off --ledger PATH; the remaining positionals keep their old meaning."""
+    parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    parser.add_argument("--ledger", default=None)
+    parser.add_argument("positionals", nargs="*")
+    parsed = parser.parse_args(argv)
+    return parsed.positionals, Path(parsed.ledger) if parsed.ledger else LEDGER
+
+
 def main(argv: list[str]) -> int:
-    direction = argv[0] if argv else "up"
     try:
-        horizon = int(argv[1]) if len(argv) > 1 else 10
+        positionals, ledger_path = _parse(argv)
+    except SystemExit:
+        print(
+            "REFUSED: usage: thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]", flush=True
+        )
+        return 2
+    if len(positionals) > 2:
+        print("REFUSED: too many arguments.", flush=True)
+        return 2
+    direction = positionals[0] if positionals else "up"
+    try:
+        horizon = int(positionals[1]) if len(positionals) > 1 else 10
         stated = thesis.Thesis(TICKER, direction, horizon)
     except ValueError as exc:
         print(f"REFUSED: {exc}", flush=True)
         return 2
 
-    ledger = CreditLedger(LEDGER)
+    ledger = CreditLedger(ledger_path)
     if ledger.unreadable:
         print("REFUSED: the credit ledger is unreadable; fix it first.", flush=True)
         return 3
@@ -78,7 +101,7 @@ def main(argv: list[str]) -> int:
     try:
         client = ResearchClient.from_env(
             phase=phase,
-            ledger_path=LEDGER,
+            ledger_path=ledger_path,
             max_credits=MAX_CREDITS,
             call_cap=len(tools.TOOL_NAMES) * MAX_ATTEMPTS,
             total_budget=TOTAL_BUDGET,
@@ -101,18 +124,20 @@ def main(argv: list[str]) -> int:
         client.close()
 
     report = thesis.evaluate(stated, results)
+    credits_used = CreditLedger(ledger_path).spent(phase)
     OUT.mkdir(exist_ok=True)
     (OUT / f"thesis_{TICKER}.md").write_text(thesis.render_markdown(report), encoding="utf-8")
+    payload = thesis.to_dict(report)
+    payload["credits_used"] = credits_used
     (OUT / f"thesis_{TICKER}.json").write_text(
-        json.dumps(thesis.to_dict(report), indent=2) + "\n", encoding="utf-8"
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8"
     )
 
-    after = CreditLedger(LEDGER)
     print(f"thesis: {TICKER} {stated.direction} {stated.horizon_days} days", flush=True)
     for bucket, counts in report.tallies.items():
         print(f"  {bucket}: {counts}", flush=True)
     print(f"missing: {len(report.missing)}", flush=True)
-    print(f"credits used this run: {after.spent(phase)}", flush=True)
+    print(f"credits used this run: {credits_used}", flush=True)
     print(f"report: {OUT / f'thesis_{TICKER}.md'}", flush=True)
     return 0
 

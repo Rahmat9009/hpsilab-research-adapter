@@ -142,7 +142,7 @@ These limits are checked before each request using the reserved price described 
 python -m hpsilab_research_adapter.thesis NVDA --direction up --horizon 10 [--json]
 ```
 
-You state the ticker, the direction (`up`, `down` or `range`) and the horizon in days. The module runs the six tools once (same credit flags and exit codes as the CLI, one pass is about 38 credits) and applies a few fixed, documented rules that label each observed value as `supports`, `challenges`, `neutral` or `context` for your thesis. It never picks a thesis and gives no verdict. Every rule's text is printed with its evidence. Only `monte_carlo` states a horizon; evidence for a different horizon is shown but tallied separately. Failed tools, absent fields and unexpected types are listed under "Missing", never guessed. The two suggested price-level fields of `ai_prediction` are deliberately never used. Output carries a fixed disclaimer: research only, not a recommendation, not verified by HPSILab. The Python API is `thesis.evaluate`, `thesis.render_markdown` and `thesis.to_dict`. Full description, every rule verbatim and a synthetic example report: [docs/THESIS.md](docs/THESIS.md). The hand-run live demo is `tools/thesis_demo.py` (not run in CI).
+You state the ticker, the direction (`up`, `down` or `range`) and the horizon in days. The module runs the six tools once (same credit flags and exit codes as the CLI, one pass is about 38 credits) and applies a few fixed, documented rules that label each observed value as `supports`, `challenges`, `neutral` or `context` for your thesis. It never picks a thesis and gives no verdict. Every rule's text is printed with its evidence. Only `monte_carlo` states a horizon; evidence for a different horizon is shown but tallied separately. Failed tools, absent fields and unexpected types are listed under "Missing", never guessed. The two suggested price-level fields of `ai_prediction` are deliberately never used. Output carries a fixed disclaimer: research only, not a recommendation, not verified by HPSILab. The Python API is `thesis.evaluate`, `thesis.render_markdown` and `thesis.to_dict`. Full description, every rule verbatim and a synthetic example report: [docs/THESIS.md](docs/THESIS.md). The hand-run live demo is `tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]` (not run in CI; limits 40 credits per run, 190 in total, balance floor 1800; `--ledger` uses the given ledger file directly instead of the default `.credits/ledger.json`). To share its report with an external reviewer, `python tools/thesis_summary.py .probe/thesis_NVDA.json` prints a share-safe Markdown summary: thesis, tools called, fields used with stance label, horizon status and rule text, tallies, missing list, credits used and the fixed disclaimer, and never any value observed in an HPSILab response.
 
 ### Library example
 
@@ -187,6 +187,9 @@ Known limits:
 - A request that times out but is billed by HPSILab after the timeout can be under-counted by that call's price if the next response carries `X-Credits-Charged`. The balance and the floor check stay correct because they use the balance HPSILab reports.
 - If the first-use check of the credit endpoints fails, that run is usually refused on its budget even though nothing was spent. This fails closed, and the next run checks again.
 - A hand-edited or damaged ledger file (for example a negative or non-numeric cost) is treated as unreadable and refuses every request.
+- The ledger lock has been tested on Windows only. The POSIX path uses the same lock-file approach but has not been exercised.
+- The thesis `monte_carlo` range rule is weak: a central interval usually contains the start price, so it tends to support a range thesis.
+- The live thesis demo (`tools/thesis_demo.py`) has not yet been run.
 
 Retry policy:
 
@@ -214,7 +217,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 365 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
+The expected result is 386 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 
