@@ -16,7 +16,7 @@ It is read-only and for research and analysis only. See `TERMS.md`.
 - **Thesis evidence module** (`hpsilab_research_adapter.thesis`, see `docs/THESIS.md`): fixed, documented rules label each observed value `supports`, `challenges`, `neutral` or `context` for a thesis the user states. Research only; no verdict, no advice.
 - **Demo script** `tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]`: hand-run, limits 40 credits per run, 190 in total, balance floor 1800, refuses before any request when the configuration is unusable (including a missing ledger file). `--ledger` uses a given ledger file directly. One pass costs 41 credits at the catalog prices of 2026-11-22, which is above the 40-credit run cap, so the last tool of a pass can be refused; `monte_carlo` runs first so that the horizon-bearing tool is never the one lost.
 - **Summary tool** `tools/thesis_summary.py REPORT.json`: a share-safe Markdown summary for an external reviewer that contains no value observed in any HPSILab response.
-- Test suite: **401 passed, 0 skipped** (offline).
+- Test suite: **402 passed, 0 skipped** (offline).
 
 v0.2.0 is new and has not been reviewed by anyone outside this project. HPSILab has not reviewed, verified or endorsed it.
 
@@ -38,6 +38,7 @@ v0.2.0 is new and has not been reviewed by anyone outside this project. HPSILab 
 | Check | Result |
 | --- | --- |
 | Live probe, NVDA x 6 tools (2026-11-22) | 6/6 HTTP 200. Shapes saved as keys and types only in `schemas/`. 38 credits. |
+| Live thesis demo, NVDA, up, 10 days (2026-11-27) | 6/6 tools succeeded. 17 evidence items, 1 field missing (`ai_prediction.model_consensus`), `monte_carlo` horizon matched. 38 credits, within the 40-credit cap and the 190-credit total (185 used). |
 | Live ship check, AAPL, SPY, NVDA x 6 tools | 17 of 18 planned calls sent, all 17 HTTP 200. The credit guard refused the 18th, NVDA `monte_carlo`, before sending it, because it would have crossed the 112-credit run budget. NVDA `monte_carlo` is covered by the probe. 109 credits. |
 | CLI end to end (live) | `hpsilab SPY --tool iv_radar --json` (the command was named `hpsilab` at the time; it is now `hpsilab-research`): HTTP 200, recorded in the ledger, 0 credits. |
 | Normalization of real responses (offline) | The final normalizer was run on the 6 real probe responses (NVDA): 6/6 parse with every expected field present (0 missing). `monte_carlo` reports its horizon. Counts only; no values were printed. |
@@ -73,11 +74,11 @@ Prices from the live catalog: analyze_stock 12, ai_prediction 2, iv_radar 3, opt
   - **Failed first-use check.** If the first-use check of the credit endpoints fails, that run is refused even though nothing was spent.
   - **Top-ups.** A top-up between runs, combined with responses that carry only `X-Credits-Remaining`, can mis-estimate one call's cost.
 - **Weak `monte_carlo` range rule.** A central interval usually contains the start price, so the range rule tends to support a range thesis.
-- **The live thesis demo has not yet been run.** `tools/thesis_demo.py` and `tools/thesis_summary.py` are covered by offline tests with synthetic data only.
+- **The live thesis demo has been run once (2026-11-27, NVDA, up, 10 days).** That is one real pass; the rules are otherwise covered by offline tests with synthetic data. The report itself stays local (`.probe/`, git-ignored) and is shared only as the value-free `tools/thesis_summary.py` output.
 - **`Result.error` is reserved.** Errors are raised, never returned.
 - **The pre-commit hooks are configured but not installed** in this checkout (`pre-commit install` has not been run). gitleaks was run manually.
 - **The README's "About HPSILab" section is factual but generic.** It uses only SDK metadata and the link. The owner may replace it with approved wording.
-- **Human-only actions, not done:** pushing to the remote, merging to a default branch, changing repository visibility, granting access, and sending any message.
+- **Human-only actions:** pushing to the remote, merging to a default branch, changing repository visibility, granting access, and sending any message are done by the maintainers, never by the tooling.
 
 ## Next
 

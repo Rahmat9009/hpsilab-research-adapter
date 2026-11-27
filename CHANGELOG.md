@@ -38,7 +38,10 @@ HPSILab product, and HPSILab has not verified or endorsed it.
   whitelists, the heading is "Tool outcomes", and `-h`/`--help` exits 0.
 - `python -m hpsilab_research_adapter.thesis` prints no report when the client could not
   be created (for example no key), because no tool was called.
-- Test suite: 401 tests, all offline.
+- `CreditLedger` accepts a plain string path as well as a `Path`.
+- The live thesis demo was run once on 2026-11-27 (NVDA, up, 10 days): 6 of 6 tools,
+  38 credits. The report stays local; only the value-free summary is shared.
+- Test suite: 402 tests, all offline.
 
 ## 0.1.0
 

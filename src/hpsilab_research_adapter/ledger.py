@@ -213,11 +213,12 @@ class _FileLock:
 class CreditLedger:
     def __init__(
         self,
-        path: Path | None = DEFAULT_LEDGER_PATH,
+        path: Path | str | None = DEFAULT_LEDGER_PATH,
         *,
         lock_timeout: float = LOCK_TIMEOUT_SECONDS,
         lock_stale_after: float = LOCK_STALE_SECONDS,
     ) -> None:
+        path = None if path is None else Path(path)
         self.path = path
         self._lock = threading.RLock()
         self._file_lock = (

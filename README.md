@@ -191,7 +191,7 @@ Known limits:
 - A hand-edited or damaged ledger file (for example a negative or non-numeric cost) is treated as unreadable and refuses every request.
 - The ledger lock has been tested on Windows only. The POSIX path uses the same lock-file approach but has not been exercised.
 - The thesis `monte_carlo` range rule is weak: a central interval usually contains the start price, so it tends to support a range thesis.
-- The live thesis demo (`tools/thesis_demo.py`) has not yet been run.
+- The live thesis demo (`tools/thesis_demo.py`) has been run once, on 2026-11-27 (NVDA, up, 10 days: 6 of 6 tools, 38 credits). It is a single pass, not an evaluation of the rules.
 
 Retry policy:
 
@@ -219,7 +219,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 401 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
+The expected result is 402 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 

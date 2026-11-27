@@ -913,3 +913,12 @@ def test_failed_save_keeps_the_charge_and_fails_closed(
         ledger.authorize("p", budget=1000, call_cap=100, price=1)
     assert ledger.spent() == 12
     assert not (tmp_path / "ledger.tmp").exists()
+
+
+def test_ledger_accepts_a_str_path(tmp_path):
+    """A plain string path works like a Path (it used to raise AttributeError)."""
+    target = tmp_path / "ledger.json"
+    led = CreditLedger(str(target))
+    assert led.path == target
+    assert led.spent() == 0
+    assert not led.unreadable
