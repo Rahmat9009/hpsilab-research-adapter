@@ -130,3 +130,18 @@ and ruff. Before an initial commit, stage the intended files so the staged scan
 has content. Install the hook for subsequent commits even when gitleaks is
 unavailable: it will fail closed until the binary is supplied. See the recorded
 verification status in `DELIVERY.md` before relying on the scanner configuration.
+
+## Thesis, summary and ledger tests
+
+`test_thesis.py` covers the fixed thesis rules, the horizon buckets (only an exact
+whole-day match counts), the fields that are never read, and the thesis command line
+with a fake client (including that no report is printed when no client could be built).
+
+`test_thesis_summary.py` covers the share-safe summary: sentinel values placed in every
+slot of a report must never be printed, and field names and details are checked against
+whitelists. It also covers the demo refusals (missing, empty or unreadable ledger,
+budget below the run cap), each with no client created, the early-stop exit code, and
+`--help`.
+
+`test_ledger.py` covers the ledger lock, the damaged-ledger fail-closed behaviour and a
+failed save (the charge stays in memory and later requests are refused).

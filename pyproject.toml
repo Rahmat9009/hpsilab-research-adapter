@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hpsilab-research-adapter"
-version = "0.1.0"
+version = "0.2.0"
 description = "Read-only research adapter for six HPSILab tools (independent, unverified third-party integration; not an official HPSILab product)"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -34,7 +34,7 @@ testpaths = ["tests"]
 pythonpath = ["src", "tests"]
 addopts = "-ra --strict-markers --strict-config --import-mode=importlib"
 markers = [
-    "sdk_contract: blocked until Faisal supplies the SDK and agreed test binding",
+    "sdk_contract: error-contract tests bound to the real ResearchClient",
     "schema_pending: requires documented provider response structures",
     "secret_scanner: requires a locally installed gitleaks binary",
 ]

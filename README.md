@@ -136,6 +136,14 @@ These limits are checked before each request using the reserved price described 
 | 4 | Credit problem. | `CreditsExhausted` (the account cannot pay for the call), `CreditBudgetExceeded` (a local cap, the total budget or the balance floor would be crossed; refused before sending) |
 | 5 | At least one call failed with an upstream problem after the retry policy; other calls still ran. | `RateLimited`, `Timeout`, `UpstreamError` (including a response that does not match the expected shape) |
 
+### Thesis evidence (research demo)
+
+```
+python -m hpsilab_research_adapter.thesis NVDA --direction up --horizon 10 [--json]
+```
+
+You state the ticker, the direction (`up`, `down` or `range`) and the horizon in days. The module runs the six tools once (same credit flags and exit codes as the CLI, one pass cost 38 credits when observed on 2026-11-22 and is 41 at the catalog prices of that day) and applies a few fixed, documented rules that label each observed value as `supports`, `challenges`, `neutral` or `context` for your thesis. It never picks a thesis and gives no verdict. Every rule's text is printed with its evidence. Only `monte_carlo` states a horizon; evidence for a different horizon is shown but tallied separately. Failed tools, absent fields and unexpected types are listed under "Missing", never guessed. The two suggested price-level fields of `ai_prediction` are deliberately never used. Output carries a fixed disclaimer: research only, not a recommendation, not verified by HPSILab. The Python API is `thesis.evaluate`, `thesis.render_markdown` and `thesis.to_dict`. Full description, every rule verbatim and a synthetic example report: [docs/THESIS.md](docs/THESIS.md). The hand-run live demo is `tools/thesis_demo.py [DIRECTION [HORIZON_DAYS]] [--ledger PATH]` (not run in CI; limits 40 credits per run, 190 in total, balance floor 1800; `--ledger` uses the given ledger file directly instead of the default `.credits/ledger.json`; the ledger file must exist, otherwise it refuses before any request). To share its report with an external reviewer, `python tools/thesis_summary.py .probe/thesis_NVDA.json` prints a share-safe Markdown summary: thesis, tool outcomes, fields used with stance label, horizon status and rule text, tallies, missing list, credits used and the fixed disclaimer, and never any value observed in an HPSILab response.
+
 ### Library example
 
 ```python
@@ -166,16 +174,24 @@ Before each tool request, the ledger checks:
 
 The price reserved for a request is the tool's catalog price when the catalog lists it; otherwise the largest cost previously recorded for that tool; otherwise 20 Credits (above the largest single-call cost observed when this adapter was built, 15 Credits).
 
-After each response, the ledger takes the cost from `X-Credits-Charged`, or from the drop in `X-Credits-Remaining`. If the balance header is missing, it calls `GET /api/credits/balance`. A cost is never assumed to be zero without evidence: an HTTP error status counts as 0 (the SDK README states failed calls are not charged); a negative charge, a balance increase (for example a top-up) or a missing balance count as unknown, and unknown costs count as at least 20 Credits in every budget. If the cost of a tool request cannot be established (for example a response without credit headers, or a transport failure, while the balance endpoint is also unavailable), the ledger becomes blind and refuses further tool requests until a later balance read succeeds, normally at the start of the next run. An unreadable ledger file refuses every request; move or fix the file.
+After each response, the ledger takes the cost from `X-Credits-Charged`, or from the drop in `X-Credits-Remaining`. If the balance header is missing, it calls `GET /api/credits/balance`. A cost is never assumed to be zero without evidence: an HTTP error status counts as 0 (the SDK README states failed calls are not charged); a negative charge, a balance increase (for example a top-up) or a missing balance count as unknown, and unknown costs count as at least 20 Credits in every budget. If the cost of a tool request cannot be established (for example a response without credit headers, or a transport failure, while the balance endpoint is also unavailable), the ledger becomes blind and refuses further tool requests until a later balance read succeeds, normally at the start of the next run. An unreadable ledger file refuses every request, on every call, with `CreditBudgetExceeded`; move or fix the file.
 
-The price reserved for a tool is learned only from successful calls; a failed call (recorded at 0 because it is not charged) never lowers it.
+The ledger file is shared safely between processes. Every read, check, record and save runs under a lock file next to the ledger (`<ledger>.lock`, standard library only) and re-reads the file first, so two processes on one ledger never overwrite each other's entries. If the lock cannot be taken within 10 seconds, the request is refused with `CreditBudgetExceeded` and nothing is sent. A lock file older than 30 seconds is treated as left by a dead process and removed.
+
+The price reserved for a tool is learned only from successful calls; a failed call (recorded at 0 because it is not charged) never lowers it. A learned cost of 0 does not lower it either when the catalog has no price for the tool: the reserve stays at the unknown-price reserve (20 Credits), so `--max-credits 0` refuses such a call. A catalog price, when present, always wins.
 
 Known limits:
 
-- The ledger file is not locked. Do not run two processes on the same ledger file at once.
+- The ledger lock is held only while the file is read or written, not while a request is in flight. Two processes sharing one ledger can both pass the budget check before either records its call, so each can exceed a shared budget by one in-flight call per process. Removing a stale lock is not atomic against another process doing the same.
+- If the lock cannot be taken while recording a response that has already arrived, that call is kept in memory only (not written to the file) and the ledger refuses every later request from that client.
+- If the ledger file cannot be written (for example Windows refuses to replace it while another process holds it open), the charge stays in memory and the ledger refuses every later request from that client.
+- A top-up between runs, combined with responses that carry only `X-Credits-Remaining`, can mis-estimate one call's cost.
 - A request that times out but is billed by HPSILab after the timeout can be under-counted by that call's price if the next response carries `X-Credits-Charged`. The balance and the floor check stay correct because they use the balance HPSILab reports.
 - If the first-use check of the credit endpoints fails, that run is usually refused on its budget even though nothing was spent. This fails closed, and the next run checks again.
 - A hand-edited or damaged ledger file (for example a negative or non-numeric cost) is treated as unreadable and refuses every request.
+- The ledger lock has been tested on Windows only. The POSIX path uses the same lock-file approach but has not been exercised.
+- The thesis `monte_carlo` range rule is weak: a central interval usually contains the start price, so it tends to support a range thesis.
+- The live thesis demo (`tools/thesis_demo.py`) has been run once, on 2026-11-27 (NVDA, up, 10 days: 6 of 6 tools, 38 credits). It is a single pass, not an evaluation of the rules.
 
 Retry policy:
 
@@ -203,7 +219,7 @@ The test suite runs offline and makes no network calls:
 .\.venv\Scripts\python.exe -m pytest --basetemp=.test-tmp
 ```
 
-The expected result is 289 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
+The expected result is 402 passed, 0 skipped. See [tests/README.md](tests/README.md) for what each part covers.
 
 The offline suite guarantees the following:
 
