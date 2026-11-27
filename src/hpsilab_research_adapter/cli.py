@@ -58,7 +58,7 @@ _PER_CALL_ERRORS = (errors.RateLimited, errors.Timeout, errors.UpstreamError)
 DESCRIPTION = (
     "HPSILab research-only CLI. Research and analysis only. The tool is read-only:\n"
     "it never generates, approves, submits or executes orders.\n"
-    "Independent integration, not an official or endorsed HPSILab product."
+    "Independent, unverified third-party integration, not an official or endorsed HPSILab product."
 )
 EPILOG = (
     "Live runs need HPSILAB_API_KEY in the environment. Use --status to check\n"
@@ -85,7 +85,7 @@ def _non_negative_int(raw: str) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="hpsilab",
+        prog="hpsilab-research",
         description=DESCRIPTION,
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -153,7 +153,7 @@ def _sdk_version() -> str:
 def _print_status() -> None:
     # Only a yes/no for the key is printed. Its value never leaves os.environ.
     key_set = "yes" if os.environ.get(policy.ENV_API_KEY) else "no"
-    print(f"hpsilab {__version__} (research-only, read-only)")
+    print(f"hpsilab-research {__version__} (research-only, read-only)")
     print("Research and analysis only. Never generates, approves, submits or executes orders.")
     print("Tools:")
     for name in tools.TOOL_NAMES:

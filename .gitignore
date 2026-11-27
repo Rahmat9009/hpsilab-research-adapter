@@ -16,3 +16,7 @@ dist/
 # Live probe raw responses and credit ledger: never committed
 .probe/
 .credits/
+
+# Private correspondence and internal AI-agent instructions: kept locally, never published
+EMAIL_DRAFT.md
+CLAUDE.md

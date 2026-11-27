@@ -5,7 +5,7 @@ Authors: Mohammed Faisal Parvez (SDK integration, client, credit ledger, normali
 and Rahmat Ullah (offline test infrastructure, error-contract and fixture specifications,
 read-only AST boundary checks, secret scanning, pre-commit setup).
 
-This is an independent integration, not an official HPSILab product. HPSILab has not endorsed it.
+This is an independent, unverified third-party integration, not an official HPSILab product. HPSILab has not verified or endorsed it, and there is no HPSILab Community listing approval.
 It is read-only and for research and analysis only. See `TERMS.md`.
 
 ## What works
@@ -15,11 +15,11 @@ It is read-only and for research and analysis only. See `TERMS.md`.
   - It never calls `generate_*`.
 - **Credits-only mode.** The adapter forces `payment_mode=CREDITS_ONLY` and passes no wallet. It refuses to run if `HPSILAB_X402_PRIVATE_KEY` is set.
 - **Missing key.** It raises `AuthError` before any SDK client is created, which is verified with network access blocked.
-- **CLI.** `hpsilab TICKER ... --tool ... [--json]` has per-run, total and balance-floor credit limits and exit codes 0, 2, 3, 4 and 5. It continues past failures of a single call, and always prints the results it has completed.
+- **CLI.** `hpsilab-research TICKER ... --tool ... [--json]` has per-run, total and balance-floor credit limits and exit codes 0, 2, 3, 4 and 5. It continues past failures of a single call, and always prints the results it has completed.
 - **Retries.** 429, 5xx and connection errors get up to 3 attempts. Timeouts get 1 attempt, because a timed-out call may already have been billed. Credit and auth errors are never retried. Every attempt is checked and recorded by the credit ledger.
 - **Normalization.** Every tool returns a common `Result`: `tool`, `ticker`, `data`, `horizon`, `source_fields`, `missing_fields`. Values pass through unchanged. `horizon` is reported only when the response states one (`monte_carlo.horizon_days`). It is never inferred.
 - **Price parser.** It reads the live catalog shape: `canonical_tool_name` and `aliases` map to `credits` for active entries only, with a fallback that matches the request path against `rest_path_patterns`.
-- **Docs.** README with the independent-integration and no-responsibility wording from `TERMS.md`, the link to https://hpsilab.com, MIT `LICENSE` scoped to the adapter code only, and `TERMS.md`.
+- **Docs.** README with the independent-integration and no-responsibility wording from `TERMS.md`, the link to https://hpsilab.com, the standard MIT `LICENSE`, and `TERMS.md`. The note that the licence covers only the adapter code is in the README and `TERMS.md`.
 
 ## Evidence
 
@@ -27,7 +27,7 @@ It is read-only and for research and analysis only. See `TERMS.md`.
 | --- | --- |
 | Live probe, NVDA x 6 tools (2026-11-22) | 6/6 HTTP 200. Shapes saved as keys and types only in `schemas/`. 38 credits. |
 | Live ship check, AAPL, SPY, NVDA x 6 tools | 17 of 18 planned calls sent, all 17 HTTP 200. The credit guard refused the 18th, NVDA `monte_carlo`, before sending it, because it would have crossed the 112-credit run budget. NVDA `monte_carlo` is covered by the probe. 109 credits. |
-| CLI end to end (live) | `hpsilab SPY --tool iv_radar --json`: HTTP 200, recorded in the ledger, 0 credits. |
+| CLI end to end (live) | `hpsilab SPY --tool iv_radar --json` (the command was named `hpsilab` at the time; it is now `hpsilab-research`): HTTP 200, recorded in the ledger, 0 credits. |
 | Normalization of real responses (offline) | The final normalizer was run on the 6 real probe responses (NVDA): 6/6 parse with every expected field present (0 missing). `monte_carlo` reports its horizon. Counts only; no values were printed. |
 | Test suite | **289 passed, 0 skipped** on `feat/adapter-v1`. The same count comes from a fresh clone with a clean `pip install .`, which installs only `hpsilab-mcp==0.14.2` and the adapter. No x402 or wallet packages are installed. |
 | Rahmat's safety tests | `tests/test_readonly.py`, `tests/readonly_scan.py`, `tests/test_secret_scanner.py`, `tools/scan_secrets.py`, `tests/test_errors.py`, `tests/sdk_contract.py`, `.pre-commit-config.yaml` and `.gitleaks.toml` are unchanged from base commit `c06bb13`. All 12 error contracts pass against the real client; none are skipped. |

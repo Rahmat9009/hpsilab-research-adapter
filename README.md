@@ -4,7 +4,7 @@ A read-only Python command-line tool and library that wraps six HPSILab research
 
 > **Notice**
 >
-> This is an independent integration. It is not an official HPSILab product, and HPSILab has not endorsed it.
+> This is an independent, unverified third-party integration. It is not an official HPSILab product. HPSILab has not verified or endorsed it, and it has no HPSILab Community listing approval.
 >
 > The adapter is for research and analysis only. It is read-only. It never generates, approves, submits or executes real-money orders, directly or through another service. HPSILab outputs must never generate, approve, authorize, route or execute trades, directly or indirectly.
 >
@@ -61,19 +61,19 @@ Do not write the key into a file in this repository, and do not commit it. If th
 
 ## Usage
 
-Real output of `hpsilab --help`:
+Real output of `hpsilab-research --help`:
 
 ```
-usage: hpsilab [-h]
-               [--tool {all,analyze_stock,ai_prediction,iv_radar,option_pressure,pretrade_risk_scan,monte_carlo}]
-               [--json] [--max-credits N] [--min-balance N]
-               [--total-credits N] [--ledger PATH | --no-ledger] [--status]
-               [--version]
-               [TICKER ...]
+usage: hpsilab-research [-h]
+                        [--tool {all,analyze_stock,ai_prediction,iv_radar,option_pressure,pretrade_risk_scan,monte_carlo}]
+                        [--json] [--max-credits N] [--min-balance N]
+                        [--total-credits N] [--ledger PATH | --no-ledger]
+                        [--status] [--version]
+                        [TICKER ...]
 
 HPSILab research-only CLI. Research and analysis only. The tool is read-only:
 it never generates, approves, submits or executes orders.
-Independent integration, not an official or endorsed HPSILab product.
+Independent, unverified third-party integration, not an official or endorsed HPSILab product.
 
 positional arguments:
   TICKER                ticker symbol(s), for example NVDA MSFT
@@ -103,8 +103,8 @@ against the credit budget (see --max-credits, --min-balance, --total-credits).
 Examples. Both make live requests and spend Credits, so set a key first:
 
 ```powershell
-hpsilab NVDA --tool analyze_stock
-hpsilab AAPL SPY --tool all --json
+hpsilab-research NVDA --tool analyze_stock
+hpsilab-research AAPL SPY --tool all --json
 ```
 
 Tickers are case-insensitive and are converted to upper case. A ticker starts with a letter and may contain letters, digits, `.` and `-`, up to 10 characters in total. `--tool all` is the default. Each ticker and tool pair is one planned request, so `AAPL SPY --tool all` plans 12 requests.
@@ -251,8 +251,8 @@ The hooks are local system hooks. They do not download environments. They run th
 - Rahmat Ullah: offline test infrastructure, error-contract and fixture specifications, read-only AST boundary checks, secret scanning and pre-commit setup.
 - Mohammed Faisal Parvez: SDK integration, client, normalization, CLI.
 
-HPSILab and the HPSILab name belong to their owner. This project is an independent integration.
+HPSILab and the HPSILab name belong to their owner. This project is an independent, unverified third-party integration.
 
 ## License
 
-The adapter's own code is released under the MIT License. See [LICENSE](LICENSE). The license does not cover HPSILab's API, data, services or branding.
+The adapter's own code is released under the MIT License. See [LICENSE](LICENSE). The license does not cover HPSILab's API, data, services or branding, and it does not imply any endorsement by HPSILab.
